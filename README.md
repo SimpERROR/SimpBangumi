@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  简体中文 | <a href="github.com/SimpERROR/SimpBangumi/README_EN.md">English</a>
+  简体中文 | <a href="https://github.com/SimpERROR/SimpBangumi/blob/main/README_EN.md">English</a>
 </p>
 
 

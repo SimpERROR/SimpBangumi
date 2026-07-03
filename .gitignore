@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+src-tauri/target
+src-tauri/gen/schemas
+**/*.rs.bk
+
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+
+.env

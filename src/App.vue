@@ -4,6 +4,7 @@ import TitleBar from "./components/TitleBar.vue";
 import Pager from "./components/Pager.vue";
 import TimelineView from "./views/Timeline.vue";
 import CollectionsView from "./views/Collections.vue";
+import WelcomeView from "./views/Welcome.vue";
 import { useAppStore } from "./stores/app";
 import { useSessionStore } from "./stores/session";
 import { useHome } from "./composables/useHome";
@@ -16,6 +17,13 @@ const pagination = usePagination({
   initialOffset: appStore.offset.value,
 });
 const home = useHome({ pagination });
+
+const showWelcome = computed(
+  () =>
+    sessionStore.session.value !== null &&
+    !sessionStore.authenticated.value &&
+    !sessionStore.dismissed.value,
+);
 
 const pageTitle = computed(() =>
   appStore.view.value === "timeline" ? "Timeline" : "Subject Collections",
@@ -47,7 +55,9 @@ onMounted(() => {
   <div class="window">
     <TitleBar />
 
-    <main class="page">
+    <WelcomeView v-if="showWelcome" />
+
+    <main v-else class="page">
       <section class="page-header">
         <div>
           <p class="eyebrow">Home</p>

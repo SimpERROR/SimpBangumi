@@ -360,3 +360,147 @@ h1 {
     grid-column: 2;
   }
 }
+
+.welcome {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 32px 16px;
+}
+
+.welcome__card {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 36px 32px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.welcome__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.welcome__logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  object-fit: cover;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.welcome__title {
+  font-size: 22px;
+  text-align: center;
+}
+
+.welcome__subtitle {
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.welcome__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.welcome__section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.welcome__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.welcome__input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--bg);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 160ms ease;
+}
+
+.welcome__input:focus {
+  border-color: var(--accent);
+}
+
+.welcome__input:disabled {
+  opacity: 0.5;
+}
+
+.welcome__primary-button {
+  padding: 9px 16px;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  background: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.welcome__primary-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.welcome__primary-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.welcome__error {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.welcome__hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.welcome__hint a {
+  color: var(--accent);
+}
+
+.welcome__hint a:hover {
+  color: var(--accent-hover);
+}
+
+.welcome__skip-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: underline;
+  transition: color 160ms ease;
+}
+
+.welcome__skip-button:hover {
+  color: var(--text);
+}

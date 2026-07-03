@@ -1,16 +1,23 @@
 <p align="center">
-  <!-- 替换下面 img 的 src 属性为你自己的图标路径 -->
   <img src="https://raw.githubusercontent.com/SimpERROR/SimpBangumi/refs/heads/main/app-logo.png" alt="SimpBangumi Logo" width="128" height="128">
 </p>
 
 <h1 align="center">SimpBangumi</h1>
 
+<p align="center">
+  <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
+  <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-v2-blueviolet.svg" alt="Tauri Version"></a>
+  <img src="https://img.shields.io/badge/Stage-Beta-orange.svg" alt="beta">
+</p>
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Tauri Version](https://img.shields.io/badge/Tauri-v2-blueviolet.svg)](https://tauri.app/)
-[![Stage](https://img.shields.io/badge/Stage-Beta-orange.svg)]()
+<p align="center">
+  简体中文 | <a href="github.com/SimpERROR/SimpBangumi/README_EN.md">English</a>
+</p>
 
-一个基于 **Tauri v2** + **Rust** + **Vue3** 构建的 [Bangumi 番组计划](https://bgm.tv) 桌面客户端。
+
+<p align="center">
+  一个基于 <b>Tauri v2</b> + <b>Rust</b> + <b>Vue3</b> 构建的 <a href="https://bgm.tv">Bangumi 番组计划</a> 桌面客户端。
+</p>
 
 > [!NOTE]
 > 本项目目前处于 Beta 阶段，欢迎下载体验并提交 Issue！

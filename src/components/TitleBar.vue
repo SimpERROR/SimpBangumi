@@ -35,8 +35,8 @@ async function onTitleBarDoubleClick(event: MouseEvent) {
 <template>
   <header class="titlebar" @dblclick="onTitleBarDoubleClick">
     <div class="titlebar__brand" data-tauri-drag-region>
-      <img class="titlebar__logo" :src="logoUrl" alt="Bangumi Client 徽标" />
-      <span>Bangumi Client</span>
+      <img class="titlebar__logo" :src="logoUrl" alt="SimpBangumi 徽标" />
+      <span>SimpBangumi</span>
     </div>
     <div class="titlebar__drag-region" data-tauri-drag-region></div>
     <div class="titlebar__controls">

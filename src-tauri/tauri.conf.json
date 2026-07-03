@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Bangumi Client",
+  "productName": "SimpBangumi",
   "version": "0.1.0",
   "identifier": "com.bangumi.client",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Bangumi Client",
+        "title": "SimpBangumi",
         "width": 1000,
         "height": 720,
         "minWidth": 720,
@@ -27,6 +27,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": ["nsis"]
   }
 }

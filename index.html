@@ -4,6 +4,67 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SimpBangumi</title>
+    <script>
+      (() => {
+        document.documentElement.classList.add("app-booting");
+
+        const themeKey = "bangumi.theme";
+        const savedTheme = localStorage.getItem(themeKey);
+        const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+        const theme = savedTheme === "dark" || savedTheme === "light"
+          ? savedTheme
+          : (prefersDark ? "dark" : "light");
+
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
+    <style>
+      html {
+        background: #14171c;
+        color-scheme: dark;
+      }
+
+      html[data-theme="light"] {
+        color-scheme: light;
+      }
+
+      html[data-theme="dark"] {
+        background: #14171c;
+        color-scheme: dark;
+      }
+
+      body,
+      #app {
+        min-height: 100vh;
+        margin: 0;
+      }
+
+      body {
+        background: #14171c;
+      }
+
+      #app {
+        background: inherit;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        background:
+          radial-gradient(circle at top, rgba(110, 183, 160, 0.16), transparent 38%),
+          linear-gradient(180deg, #1a1f26 0%, #14171c 100%);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 120ms ease;
+      }
+
+      html.app-booting body::before {
+        opacity: 1;
+      }
+    </style>
   </head>
   <body>
     <main id="app"></main>

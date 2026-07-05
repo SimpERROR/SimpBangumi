@@ -4,6 +4,7 @@ dist-ssr
 *.local
 
 src-tauri/target
+src-tauri/target-check
 src-tauri/gen/schemas
 **/*.rs.bk
 
@@ -12,5 +13,6 @@ Thumbs.db
 
 .vscode/
 .idea/
+target/
 
 .env

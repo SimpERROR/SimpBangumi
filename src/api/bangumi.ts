@@ -28,6 +28,15 @@ export interface OAuthLoginStatus {
   error?: string | null;
 }
 
+export interface OAuthStartLoginRequest {
+  state?: string;
+}
+
+export interface WebCookieStatus {
+  configured: boolean;
+  updated_at?: number | null;
+}
+
 export interface WorkerOAuthTokenRequest {
   access_token: string;
   refresh_token?: string | null;
@@ -62,6 +71,15 @@ export interface SubjectSearchParams extends PageParams {
   nsfw?: boolean;
   sort?: "match" | "heat" | "rank" | "score";
 }
+
+export type SubjectCommentInterestType =
+  | "wishes"
+  | "doings"
+  | "collections"
+  | "dropped"
+  | "on_hold";
+
+export type MonoType = "character" | "person";
 
 export interface PagedResponse<T> {
   total?: number;
@@ -185,6 +203,72 @@ export interface SearchSubject {
   tags?: SubjectTag[];
 }
 
+export interface RelatedCharacter {
+  id: number;
+  name: string;
+  summary: string;
+  type: number;
+  relation: string;
+  images?: Record<string, string | undefined>;
+  actors?: RelatedPerson[];
+}
+
+export interface RelatedPerson {
+  id: number;
+  name: string;
+  type: number;
+  career: string[];
+  relation: string;
+  eps: string;
+  images?: Record<string, string | undefined>;
+}
+
+export interface PersonDetail {
+  id: number;
+  name: string;
+  type: number;
+  career: string[];
+  summary: string;
+  locked: boolean;
+  last_modified: string;
+  images?: Record<string, string | undefined>;
+  infobox?: Array<{
+    key: string;
+    value: unknown;
+  }>;
+  gender?: string;
+  blood_type?: number;
+  birth_year?: number;
+  birth_mon?: number;
+  birth_day?: number;
+  stat: {
+    comments: number;
+    collects: number;
+  };
+}
+
+export interface CharacterDetail {
+  id: number;
+  name: string;
+  type: number;
+  summary: string;
+  locked: boolean;
+  images?: Record<string, string | undefined>;
+  infobox?: Array<{
+    key: string;
+    value: unknown;
+  }>;
+  gender?: string;
+  blood_type?: number;
+  birth_year?: number;
+  birth_mon?: number;
+  birth_day?: number;
+  stat: {
+    comments: number;
+    collects: number;
+  };
+}
+
 export class BangumiApiClient {
   getAuthSession(): Promise<AuthSession> {
     return invoke<AuthSession>("bangumi_auth_session");
@@ -202,8 +286,9 @@ export class BangumiApiClient {
     return invoke<AuthSession>("bangumi_logout");
   }
 
-  startOAuthLogin(): Promise<string> {
+  startOAuthLogin(request: OAuthStartLoginRequest = {}): Promise<string> {
     return invoke<{ url: string }>("bangumi_oauth_start_login", {
+      request,
     }).then((response) => response.url);
   }
 
@@ -213,6 +298,26 @@ export class BangumiApiClient {
 
   getMe(): Promise<BangumiUser> {
     return invoke<BangumiUser>("bangumi_get_me");
+  }
+
+  getWebCookieStatus(): Promise<WebCookieStatus> {
+    return invoke<WebCookieStatus>("bangumi_web_cookie_status");
+  }
+
+  saveWebCookie(cookie: string): Promise<WebCookieStatus> {
+    return invoke<WebCookieStatus>("bangumi_save_web_cookie", { cookie });
+  }
+
+  clearWebCookie(): Promise<WebCookieStatus> {
+    return invoke<WebCookieStatus>("bangumi_clear_web_cookie");
+  }
+
+  openEmbeddedWebLogin(): Promise<null> {
+    return invoke<null>("bangumi_open_embedded_web_login");
+  }
+
+  captureEmbeddedWebCookie(): Promise<WebCookieStatus> {
+    return invoke<WebCookieStatus>("bangumi_capture_embedded_web_cookie");
   }
 
   async getSubjectCollections(
@@ -238,6 +343,46 @@ export class BangumiApiClient {
 
   getCurrentUserSubjectCollection(subjectId: number): Promise<UserSubjectCollection> {
     return this.get<UserSubjectCollection>(`/v0/users/-/collections/${subjectId}`);
+  }
+
+  getSubjectRelatedCharacters(subjectId: number): Promise<RelatedCharacter[]> {
+    return this.get<RelatedCharacter[]>(`/v0/subjects/${subjectId}/characters`);
+  }
+
+  getSubjectRelatedPersons(subjectId: number): Promise<RelatedPerson[]> {
+    return this.get<RelatedPerson[]>(`/v0/subjects/${subjectId}/persons`);
+  }
+
+  getPersonDetail(personId: number): Promise<PersonDetail> {
+    return this.get<PersonDetail>(`/v0/persons/${personId}`);
+  }
+
+  getCharacterDetail(characterId: number): Promise<CharacterDetail> {
+    return this.get<CharacterDetail>(`/v0/characters/${characterId}`);
+  }
+
+  fetchSubjectCommentsPage(
+    subjectId: number,
+    interestType?: SubjectCommentInterestType,
+    page = 1,
+  ): Promise<string> {
+    return invoke<string>("bangumi_fetch_subject_comments_page", {
+      subjectId,
+      interestType: interestType ?? null,
+      page,
+    });
+  }
+
+  fetchMonoCommentsPage(
+    monoType: MonoType,
+    monoId: number,
+    page = 1,
+  ): Promise<string> {
+    return invoke<string>("bangumi_fetch_mono_comments_page", {
+      monoType,
+      monoId,
+      page,
+    });
   }
 
   updateCurrentUserSubjectCollection(

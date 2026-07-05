@@ -5,6 +5,7 @@ import Pager from "./components/Pager.vue";
 import CompleteView from "./views/Complete.vue";
 import CollectionsView from "./views/Collections.vue";
 import SearchView from "./views/Search.vue";
+import SettingsView from "./views/Settings.vue";
 import {
   useAppStore,
   type CollectionTypeFilter,
@@ -158,7 +159,7 @@ async function handleOAuthAutoLogin() {
   onboarding.submitting = true;
   onboarding.error = "";
 
-  const startResult = await auth.startOAuthLogin();
+  const startResult = await auth.startOAuthLogin(appStore.theme.value);
 
   if (!startResult.ok) {
     onboarding.error = startResult.error;
@@ -167,7 +168,18 @@ async function handleOAuthAutoLogin() {
   }
 
   oauth.authorizeUrl = startResult.data;
-  window.open(startResult.data, "_blank", "noopener,noreferrer");
+  try {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(startResult.data);
+  } catch (error) {
+    // Browser fallback: keep behavior working in non-Tauri preview/dev.
+    const popup = window.open(startResult.data, "_blank", "noopener,noreferrer");
+    if (!popup) {
+      onboarding.error = "授权页未自动弹出，请点击下方链接手动打开。";
+      onboarding.submitting = false;
+      return;
+    }
+  }
 
   const loginResult = await auth.finishOAuthLogin();
 
@@ -471,32 +483,9 @@ watch(
         <SearchView @open-subject="handleSearchOpenSubject" />
       </div>
 
-      <section v-if="activeHomeTab === 'settings'" class="onboarding">
-        <div class="onboarding__panel">
-          <p class="eyebrow">Settings</p>
-          <h2>显示设置</h2>
-          <p class="onboarding__description">设置条目标题优先显示原文或译名。</p>
-
-          <div class="filter-tabs__group" role="radiogroup" aria-label="标题显示优先级">
-            <button
-              class="filter-tab"
-              :class="{ 'is-active': appStore.titlePreference.value === 'translated' }"
-              type="button"
-              @click="appStore.titlePreference.value = 'translated'"
-            >
-              译名优先
-            </button>
-            <button
-              class="filter-tab"
-              :class="{ 'is-active': appStore.titlePreference.value === 'original' }"
-              type="button"
-              @click="appStore.titlePreference.value = 'original'"
-            >
-              原文优先
-            </button>
-          </div>
-        </div>
-      </section>
+      <div v-if="activeHomeTab === 'settings'" class="view-host view-host--settings">
+        <SettingsView />
+      </div>
 
       <Pager
         v-if="activeHomeTab === 'collections'"

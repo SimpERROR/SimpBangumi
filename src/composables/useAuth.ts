@@ -28,9 +28,9 @@ export function useAuth() {
   const bangumi = useBangumi();
   const sessionStore = useSessionStore();
 
-  async function startOAuthLogin(): Promise<ApiResult<string>> {
+  async function startOAuthLogin(state?: string): Promise<ApiResult<string>> {
     logInfo("starting OAuth login");
-    const result = await bangumi.startOAuthLogin();
+    const result = await bangumi.startOAuthLogin({ state });
     if (result.ok) {
       logInfo("OAuth authorize URL ready");
     } else {

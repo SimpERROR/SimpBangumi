@@ -1,10 +1,18 @@
 import {
   bangumiApi,
   type AuthSession,
+  type BangumiUser,
+  type CharacterDetail,
   type Episode,
   type OAuthLoginStatus,
+  type OAuthStartLoginRequest,
+  type MonoType,
+  type PersonDetail,
   type PagedResponse,
+  type SubjectCommentInterestType,
   type SearchSubject,
+  type RelatedCharacter,
+  type RelatedPerson,
   type SubjectDetail,
   type SubjectEpisodesParams,
   type SubjectSearchParams,
@@ -14,6 +22,7 @@ import {
   type UserSubjectCollection,
   type UserSubjectEpisodeCollectionsParams,
   type UserSubjectCollectionModifyPayload,
+  type WebCookieStatus,
   type WorkerOAuthTokenRequest,
 } from "../api/bangumi";
 
@@ -39,6 +48,14 @@ export function useBangumi() {
       return ok(await bangumiApi.getAuthSession());
     } catch (error) {
       return fail<AuthSession>(error);
+    }
+  }
+
+  async function getMe(): Promise<ApiResult<BangumiUser>> {
+    try {
+      return ok(await bangumiApi.getMe());
+    } catch (error) {
+      return fail<BangumiUser>(error);
     }
   }
 
@@ -83,6 +100,70 @@ export function useBangumi() {
       return ok(await bangumiApi.getCurrentUserSubjectCollection(subjectId));
     } catch (error) {
       return fail<UserSubjectCollection>(error);
+    }
+  }
+
+  async function getSubjectRelatedCharacters(
+    subjectId: number,
+  ): Promise<ApiResult<RelatedCharacter[]>> {
+    try {
+      return ok(await bangumiApi.getSubjectRelatedCharacters(subjectId));
+    } catch (error) {
+      return fail<RelatedCharacter[]>(error);
+    }
+  }
+
+  async function getSubjectRelatedPersons(
+    subjectId: number,
+  ): Promise<ApiResult<RelatedPerson[]>> {
+    try {
+      return ok(await bangumiApi.getSubjectRelatedPersons(subjectId));
+    } catch (error) {
+      return fail<RelatedPerson[]>(error);
+    }
+  }
+
+  async function getPersonDetail(
+    personId: number,
+  ): Promise<ApiResult<PersonDetail>> {
+    try {
+      return ok(await bangumiApi.getPersonDetail(personId));
+    } catch (error) {
+      return fail<PersonDetail>(error);
+    }
+  }
+
+  async function getCharacterDetail(
+    characterId: number,
+  ): Promise<ApiResult<CharacterDetail>> {
+    try {
+      return ok(await bangumiApi.getCharacterDetail(characterId));
+    } catch (error) {
+      return fail<CharacterDetail>(error);
+    }
+  }
+
+  async function fetchSubjectCommentsPage(
+    subjectId: number,
+    interestType?: SubjectCommentInterestType,
+    page = 1,
+  ): Promise<ApiResult<string>> {
+    try {
+      return ok(await bangumiApi.fetchSubjectCommentsPage(subjectId, interestType, page));
+    } catch (error) {
+      return fail<string>(error);
+    }
+  }
+
+  async function fetchMonoCommentsPage(
+    monoType: MonoType,
+    monoId: number,
+    page = 1,
+  ): Promise<ApiResult<string>> {
+    try {
+      return ok(await bangumiApi.fetchMonoCommentsPage(monoType, monoId, page));
+    } catch (error) {
+      return fail<string>(error);
     }
   }
 
@@ -153,9 +234,11 @@ export function useBangumi() {
     }
   }
 
-  async function startOAuthLogin(): Promise<ApiResult<string>> {
+  async function startOAuthLogin(
+    request: OAuthStartLoginRequest = {},
+  ): Promise<ApiResult<string>> {
     try {
-      return ok(await bangumiApi.startOAuthLogin());
+      return ok(await bangumiApi.startOAuthLogin(request));
     } catch (error) {
       return fail<string>(error);
     }
@@ -187,15 +270,69 @@ export function useBangumi() {
     }
   }
 
+  async function getWebCookieStatus(): Promise<ApiResult<WebCookieStatus>> {
+    try {
+      return ok(await bangumiApi.getWebCookieStatus());
+    } catch (error) {
+      return fail<WebCookieStatus>(error);
+    }
+  }
+
+  async function saveWebCookie(cookie: string): Promise<ApiResult<WebCookieStatus>> {
+    try {
+      return ok(await bangumiApi.saveWebCookie(cookie));
+    } catch (error) {
+      return fail<WebCookieStatus>(error);
+    }
+  }
+
+  async function clearWebCookie(): Promise<ApiResult<WebCookieStatus>> {
+    try {
+      return ok(await bangumiApi.clearWebCookie());
+    } catch (error) {
+      return fail<WebCookieStatus>(error);
+    }
+  }
+
+  async function openEmbeddedWebLogin(): Promise<ApiResult<null>> {
+    try {
+      return ok(await bangumiApi.openEmbeddedWebLogin());
+    } catch (error) {
+      return fail<null>(error);
+    }
+  }
+
+  async function captureEmbeddedWebCookie(): Promise<ApiResult<WebCookieStatus>> {
+    try {
+      return ok(await bangumiApi.captureEmbeddedWebCookie());
+    } catch (error) {
+      return fail<WebCookieStatus>(error);
+    }
+  }
+
+  
+
   return {
     getSession,
+    getMe,
     getCollections,
     loginWithPersonalAccessToken,
     startOAuthLogin,
     waitOAuthLoginResult,
     loginWithWorkerToken,
     logout,
+    getWebCookieStatus,
+    saveWebCookie,
+    clearWebCookie,
+    openEmbeddedWebLogin,
+    captureEmbeddedWebCookie,
     getSubjectDetail,
+    getPersonDetail,
+    getCharacterDetail,
+    fetchSubjectCommentsPage,
+    fetchMonoCommentsPage,
+    getSubjectRelatedCharacters,
+    getSubjectRelatedPersons,
     getCurrentUserSubjectCollection,
     updateCurrentUserSubjectCollection,
     getEpisodesBySubject,

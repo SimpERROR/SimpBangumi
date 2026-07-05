@@ -3,7 +3,8 @@ name: "Publish Release"
 on:
   push:
     tags:
-      - 'v*' # 当你推送形如 v1.0.0 的 tag 时触发
+      - 'v*'
+      - 'V*'
 
 jobs:
   publish-tauri:
@@ -32,13 +33,27 @@ jobs:
       - name: install dependencies
         run: npm install
 
-      - name: Build and Release
+      - name: Build and Release Base
+        id: tauri_build
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "Bangumi Client ${{ github.ref_name }}"
-          releaseBody: "自动生成的打包版本，请下载对应平台的安装包。"
+          releaseName: "SimpBangumi ${{ github.ref_name }}"
+          releaseBody: "SimpBangumi 自动发布的版本。如果你不想安装，请下载绿色免安装版 (`_Portable.exe`)。"
           releaseDraft: true
           prerelease: false
+
+      - name: Prepare Portable Exe
+        shell: powershell
+        run: |
+          Copy-Item "src-tauri/target/release/simp-bangumi.exe" "src-tauri/target/release/SimpBangumi_${{ github.ref_name }}_Portable.exe"
+          
+      - name: Upload Portable Exe to Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: src-tauri/target/release/SimpBangumi_${{ github.ref_name }}_Portable.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

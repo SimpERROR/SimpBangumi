@@ -122,6 +122,50 @@ button {
   overflow: hidden;
 }
 
+.app-toast {
+  position: fixed;
+  top: calc(var(--titlebar-height) + 14px);
+  right: 16px;
+  z-index: 260;
+  min-width: 260px;
+  max-width: min(440px, calc(100vw - 28px));
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.app-toast p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.app-toast--error {
+  border-color: color-mix(in srgb, var(--danger) 54%, var(--border));
+}
+
+.app-toast--success {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+}
+
+.app-toast--info {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.toast-slide-enter-active,
+.toast-slide-leave-active {
+  transition: transform 220ms ease, opacity 220ms ease;
+}
+
+.toast-slide-enter-from,
+.toast-slide-leave-to {
+  opacity: 0;
+  transform: translate3d(32px, -8px, 0);
+}
+
 .titlebar {
   position: relative;
   z-index: 120;
@@ -311,11 +355,23 @@ h1 {
 }
 
 .tabs {
+  position: relative;
   display: inline-flex;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.tab-indicator {
+  position: absolute;
+  top: 4px;
+  height: calc(100% - 8px);
+  border-radius: 6px;
+  background: var(--accent);
+  transition: left 0.3s ease, width 0.3s ease;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .tab,
@@ -346,6 +402,8 @@ h1 {
 }
 
 .tab {
+  position: relative;
+  z-index: 1;
   padding: 0 16px;
   color: var(--muted);
   background: transparent;
@@ -353,7 +411,7 @@ h1 {
 
 .tab.is-active {
   color: #ffffff;
-  background: var(--accent);
+  background: transparent;
 }
 
 .secondary-button {
@@ -891,6 +949,35 @@ h1 {
   background: color-mix(in srgb, #000000 28%, transparent);
 }
 
+.image-preview-overlay {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: var(--titlebar-height);
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, #000000 72%, transparent);
+}
+
+.image-preview-overlay__close {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+}
+
+.image-preview-overlay__image {
+  display: block;
+  max-width: min(92vw, 1200px);
+  max-height: calc(100vh - var(--titlebar-height) - 56px);
+  border-radius: 10px;
+  box-shadow: 0 24px 54px color-mix(in srgb, #000000 55%, transparent);
+  object-fit: contain;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
 .detail-loading-card {
   width: min(320px, calc(100% - 32px));
   display: grid;
@@ -1338,6 +1425,15 @@ h1 {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.zoomable-cover {
+  cursor: zoom-in;
+}
+
+.zoomable-cover:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -2px;
 }
 
 .person-hero__main {
@@ -2097,6 +2193,17 @@ h1 {
   .modal__actions .secondary-button,
   .modal__actions .primary-button {
     width: 100%;
+  }
+
+  .image-preview-overlay__close {
+    top: 16px;
+    right: 16px;
+    width: auto;
+  }
+
+  .image-preview-overlay__image {
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - var(--titlebar-height) - 80px);
   }
 
   .detail-drawer {

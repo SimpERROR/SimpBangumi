@@ -181,6 +181,8 @@ const preDetailLoading = ref(false);
 const detailTab = ref<"info" | "review">("info");
 const detailPage = ref<"subject" | "person" | "character">("subject");
 const monoDetailTab = ref<"info" | "review">("info");
+const imagePreviewUrl = ref("");
+const imagePreviewTitle = ref("");
 const detailContentRef = ref<HTMLElement | null>(null);
 const showDetailBackToTop = ref(false);
 const relatedCharacters = ref<RelatedCharacter[]>([]);
@@ -233,6 +235,8 @@ const monoComments = ref<Array<{
   contentText: string;
 }>>([]);
 const currentUserProfile = ref<BangumiUser | null>(null);
+
+const imagePreviewVisible = computed(() => imagePreviewUrl.value.length > 0);
 
 const collectionLoading = ref(false);
 const collectionSaving = ref(false);
@@ -608,6 +612,20 @@ function personCover(images?: Record<string, string | undefined>) {
 
 function monoCover(images?: Record<string, string | undefined>) {
   return images?.grid || images?.small || images?.medium || images?.large || "";
+}
+
+function openImagePreview(url: string, title: string) {
+  if (!url) {
+    return;
+  }
+
+  imagePreviewUrl.value = url;
+  imagePreviewTitle.value = title;
+}
+
+function closeImagePreview() {
+  imagePreviewUrl.value = "";
+  imagePreviewTitle.value = "";
 }
 
 function relationTitle(value?: string) {
@@ -1504,6 +1522,8 @@ async function updateEpisodeStatus(episodeId: number, nextType: number) {
     form.ep_status = Object.values(episodeTypeById.value).filter((type) => type === 2).length;
   }
   episodeSavingId.value = null;
+  // 通知看板娘
+  appStore.collectionSaveSuccessCounter.value++;
 }
 
 async function loadSubjectDetail(subjectId: number, prefetchedDetail?: SubjectDetail) {
@@ -1533,6 +1553,9 @@ async function loadSubjectDetail(subjectId: number, prefetchedDetail?: SubjectDe
     detail.value = detailResult.data;
   }
 
+  // 同步当前详情的 NSFW 状态到 store
+  appStore.currentDetailNsfw.value = detail.value?.nsfw ?? false;
+
   const tasks: Array<Promise<unknown>> = [loadSubjectRelations(subjectId), loadEpisodesForDetail(subjectId)];
 
   if (userCanEditCollection.value) {
@@ -1549,13 +1572,21 @@ async function loadSubjectDetail(subjectId: number, prefetchedDetail?: SubjectDe
 }
 
 function closeDetail() {
+  const wasNsfw = appStore.currentDetailNsfw.value;
   detailOpen.value = false;
   showDetailBackToTop.value = false;
+  appStore.detailBackToTopVisible.value = false;
+  appStore.currentDetailNsfw.value = false;
+  closeImagePreview();
   resetPersonDetail();
   resetCharacterDetail();
   resetMonoComments();
   monoDetailTab.value = "info";
   detailPage.value = "subject";
+  // 退出 NSFW 详情 → 触发看板娘对话
+  if (wasNsfw) {
+    appStore.nsfwExitTriggerCounter.value++;
+  }
 }
 
 watch([detailTab, detailPage, () => detail.value?.id], () => {
@@ -1592,6 +1623,11 @@ function onDetailScroll(event: Event) {
   showDetailBackToTop.value = target.scrollTop > 280;
 }
 
+// 同步「回到顶部」按钮可见性到 store，供 Live2D 看板娘避让
+watch(showDetailBackToTop, (v) => {
+  appStore.detailBackToTopVisible.value = v;
+});
+
 function scrollDetailToTop() {
   detailContentRef.value?.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1620,6 +1656,7 @@ async function openDetail(collection: SubjectCollection) {
     nsfwDialog.visible = true;
     nsfwDialog.pendingSubjectId = subjectId;
     pendingNsfwDetail.value = detailResult.data;
+    appStore.nsfwWarningVisible.value = true;
     return;
   }
 
@@ -1641,6 +1678,7 @@ async function continueNsfw(mode: "once" | "forever" | "24h") {
   nsfwDialog.visible = false;
   nsfwDialog.pendingSubjectId = null;
   pendingNsfwDetail.value = null;
+  appStore.nsfwWarningVisible.value = false;
 
   if (!pendingSubjectId) {
     return;
@@ -1660,6 +1698,7 @@ function cancelNsfw() {
   nsfwDialog.visible = false;
   nsfwDialog.pendingSubjectId = null;
   pendingNsfwDetail.value = null;
+  appStore.nsfwWarningVisible.value = false;
 }
 
 async function saveCollectionStatus() {
@@ -1692,6 +1731,8 @@ async function saveCollectionStatus() {
   collectionSavedMessage.value = "收藏状态已更新。";
   form.rate = payload.rate;
   collectionSaving.value = false;
+  // 通知看板娘
+  appStore.collectionSaveSuccessCounter.value++;
 }
 
 function formatInfoboxValue(value: unknown): string {
@@ -1823,6 +1864,18 @@ defineExpose({
     </section>
   </div>
 
+  <div
+    v-if="imagePreviewVisible"
+    class="image-preview-overlay"
+    role="dialog"
+    aria-modal="true"
+    :aria-label="imagePreviewTitle || '图片预览'"
+    @click.self="closeImagePreview"
+  >
+    <button class="secondary-button image-preview-overlay__close" type="button" @click="closeImagePreview">关闭</button>
+    <img class="image-preview-overlay__image" :src="imagePreviewUrl" :alt="imagePreviewTitle || '图片预览'" />
+  </div>
+
   <div class="drawer-overlay" :class="{ 'is-open': detailOpen }" @click="closeDetail"></div>
   <aside class="detail-drawer" :class="{ 'is-open': detailOpen }" role="dialog" aria-modal="true" aria-label="条目详情">
     <header class="detail-drawer__header">
@@ -1835,7 +1888,14 @@ defineExpose({
     <section v-else-if="detail" ref="detailContentRef" class="detail-content" @scroll.passive="onDetailScroll">
       <article v-if="detailPage === 'subject'" class="detail-hero">
         <div class="detail-hero__cover">
-          <img v-if="detailCover(detail.images)" :src="detailCover(detail.images)" alt="" loading="lazy" />
+          <img
+            v-if="detailCover(detail.images)"
+            class="zoomable-cover"
+            :src="detailCover(detail.images)"
+            alt=""
+            loading="lazy"
+            @click="openImagePreview(detailCover(detail.images), preferredSubjectTitle(detail.name, detail.name_cn, `Subject #${detail.id}`))"
+          />
           <span v-else>BG</span>
         </div>
         <div class="detail-hero__titles">
@@ -2347,7 +2407,14 @@ defineExpose({
           <template v-else-if="personDetail">
             <article class="person-hero">
               <div class="person-hero__cover">
-                <img v-if="personCover(personDetail.images)" :src="personCover(personDetail.images)" alt="" loading="lazy" />
+                <img
+                  v-if="personCover(personDetail.images)"
+                  class="zoomable-cover"
+                  :src="personCover(personDetail.images)"
+                  alt=""
+                  loading="lazy"
+                  @click="openImagePreview(personCover(personDetail.images), personDetail.name || `Person #${personDetail.id}`)"
+                />
                 <span v-else>BG</span>
               </div>
               <div class="person-hero__main">
@@ -2490,7 +2557,14 @@ defineExpose({
           <template v-else-if="characterDetail">
             <article class="person-hero">
               <div class="person-hero__cover">
-                <img v-if="personCover(characterDetail.images)" :src="personCover(characterDetail.images)" alt="" loading="lazy" />
+                <img
+                  v-if="personCover(characterDetail.images)"
+                  class="zoomable-cover"
+                  :src="personCover(characterDetail.images)"
+                  alt=""
+                  loading="lazy"
+                  @click="openImagePreview(personCover(characterDetail.images), characterDetail.name || `Character #${characterDetail.id}`)"
+                />
                 <span v-else>BG</span>
               </div>
               <div class="person-hero__main">

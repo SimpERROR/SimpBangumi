@@ -37,6 +37,12 @@ export interface WebCookieStatus {
   updated_at?: number | null;
 }
 
+export interface WebCookieValidationStatus {
+  configured: boolean;
+  valid: boolean;
+  reason?: string | null;
+}
+
 export interface WorkerOAuthTokenRequest {
   access_token: string;
   refresh_token?: string | null;
@@ -310,6 +316,18 @@ export class BangumiApiClient {
 
   clearWebCookie(): Promise<WebCookieStatus> {
     return invoke<WebCookieStatus>("bangumi_clear_web_cookie");
+  }
+
+  refreshWebCookie(): Promise<WebCookieStatus> {
+    return invoke<WebCookieStatus>("bangumi_refresh_web_cookie");
+  }
+
+  validateWebCookie(): Promise<WebCookieValidationStatus> {
+    return invoke<WebCookieValidationStatus>("bangumi_validate_web_cookie");
+  }
+
+  restoreWebCookieFromEmbeddedSession(): Promise<WebCookieStatus> {
+    return invoke<WebCookieStatus>("bangumi_restore_web_cookie_from_embedded_session");
   }
 
   openEmbeddedWebLogin(): Promise<null> {

@@ -2,12 +2,15 @@
 import { onMounted, ref } from "vue";
 import { useBangumi } from "../../composables/useBangumi";
 import { formatReadableDateTime } from "../../utils/datetime";
+import { useAppStore } from "../../stores/app";
 
 const bangumi = useBangumi();
+const appStore = useAppStore();
 const cookieInput = ref("");
 const loading = ref(false);
 const saving = ref(false);
 const clearing = ref(false);
+const validating = ref(false);
 const openingEmbedded = ref(false);
 const capturingEmbedded = ref(false);
 const error = ref("");
@@ -18,6 +21,19 @@ const cookieUpdatedAt = ref<number | null>(null);
 function resetMessages() {
   error.value = "";
   success.value = "";
+}
+
+function isInvalidCookieError(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes("cookie")
+    && (
+      normalized.includes("无效")
+      || normalized.includes("为空")
+      || normalized.includes("失效")
+      || normalized.includes("invalid")
+      || normalized.includes("empty")
+      || normalized.includes("expired")
+    );
 }
 
 async function syncCookieStatusAfterWrite(successMessage: string): Promise<boolean> {
@@ -78,6 +94,9 @@ async function captureEmbeddedCookie() {
   const result = await bangumi.captureEmbeddedWebCookie();
   if (!result.ok) {
     error.value = result.error;
+    if (isInvalidCookieError(result.error)) {
+      appStore.showToast("自动获取到的 Cookie 为空或无效，请确认已登录后重试。", "error");
+    }
     capturingEmbedded.value = false;
     return;
   }
@@ -146,6 +165,39 @@ async function clearCookie() {
   clearing.value = false;
 }
 
+async function validateCookie() {
+  validating.value = true;
+  resetMessages();
+
+  const result = await bangumi.validateWebCookie();
+  if (!result.ok) {
+    error.value = result.error;
+    appStore.showToast(result.error, "error");
+    validating.value = false;
+    return;
+  }
+
+  cookieConfigured.value = result.data.configured;
+
+  if (!result.data.configured) {
+    error.value = result.data.reason ?? "尚未保存 Cookie，请先完成登录并保存。";
+    appStore.showToast(error.value, "error");
+    validating.value = false;
+    return;
+  }
+
+  if (!result.data.valid) {
+    error.value = result.data.reason ?? "当前 Cookie 已失效，请重新登录并保存。";
+    appStore.showToast(error.value, "error");
+    validating.value = false;
+    return;
+  }
+
+  success.value = "Cookie 仍然有效。";
+  appStore.showToast(success.value, "success");
+  validating.value = false;
+}
+
 onMounted(() => {
   void refreshCookieStatus();
 });
@@ -206,20 +258,23 @@ onMounted(() => {
         <textarea
           v-model="cookieInput"
           rows="4"
-          :disabled="saving || clearing || openingEmbedded || capturingEmbedded"
+          :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded"
           placeholder="例如：chii_auth=...; chii_sid=..."
         ></textarea>
       </label>
 
       <div class="modal__actions">
-        <button class="primary-button" type="button" :disabled="saving || clearing || openingEmbedded || capturingEmbedded" @click="saveCookie">
+        <button class="primary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="saveCookie">
           {{ saving ? "保存中..." : "保存 Cookie" }}
         </button>
-        <button class="secondary-button" type="button" :disabled="saving || clearing || openingEmbedded || capturingEmbedded" @click="clearCookie">
+        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="clearCookie">
           {{ clearing ? "清除中..." : "清除 Cookie" }}
         </button>
-        <button class="secondary-button" type="button" :disabled="saving || clearing || openingEmbedded || capturingEmbedded" @click="refreshCookieStatus">
+        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="refreshCookieStatus">
           刷新状态
+        </button>
+        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="validateCookie">
+          {{ validating ? "验证中..." : "验证 cookies 有效性" }}
         </button>
       </div>
 

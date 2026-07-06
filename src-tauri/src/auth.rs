@@ -1,6 +1,7 @@
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -128,6 +129,44 @@ fn parse_stored_web_cookie(raw: &str) -> Option<StoredWebCookie> {
         cookie: trimmed.to_string(),
         updated_at: 0,
     })
+}
+
+fn parse_cookie_pairs(raw: &str) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::<String, String>::new();
+
+    for part in raw.split(';') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut segments = trimmed.splitn(2, '=');
+        let name = segments.next().unwrap_or("").trim().to_ascii_lowercase();
+        let value = segments.next().unwrap_or("").trim();
+        if name.is_empty() || value.is_empty() {
+            continue;
+        }
+
+        map.insert(name, value.to_string());
+    }
+
+    map
+}
+
+fn validate_web_cookie_header(raw: &str) -> Result<(), String> {
+    let pairs = parse_cookie_pairs(raw);
+    if pairs.is_empty() {
+        return Err("Cookie 为空或无效，请重新登录后再自动获取。".to_string());
+    }
+
+    let has_auth = pairs.get("chii_auth").map(|value| !value.trim().is_empty()).unwrap_or(false);
+    let has_sid = pairs.get("chii_sid").map(|value| !value.trim().is_empty()).unwrap_or(false);
+
+    if !has_auth || !has_sid {
+        return Err("Cookie 无效：缺少 chii_auth 或 chii_sid，请重新登录后再自动获取。".to_string());
+    }
+
+    Ok(())
 }
 
 fn save_web_cookie_to_encrypted_file(payload: &StoredWebCookie) -> Result<(), String> {
@@ -468,6 +507,8 @@ pub fn save_web_cookie(cookie: String) -> Result<WebCookieStatus, String> {
     if normalized.is_empty() {
         return Err("Cookie 不能为空".to_string());
     }
+
+    validate_web_cookie_header(&normalized)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

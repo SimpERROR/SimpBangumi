@@ -14,5 +14,8 @@ Thumbs.db
 .vscode/
 .idea/
 target/
+target-check/
+public/
+AGENTS.md
 
 .env

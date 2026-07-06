@@ -40,7 +40,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "SimpBangumi ${{ github.ref_name }}"
+          releaseName: "${{ github.ref_name }}"
           releaseBody: "SimpBangumi 自动发布的版本。如果你不想安装，请下载绿色免安装版 (`_Portable.exe`)。"
           releaseDraft: true
           prerelease: false
@@ -48,12 +48,21 @@ jobs:
       - name: Prepare Portable Exe
         shell: powershell
         run: |
-          Copy-Item "src-tauri/target/release/simp-bangumi.exe" "src-tauri/target/release/SimpBangumi_${{ github.ref_name }}_Portable.exe"
+          cd src-tauri/target/release
+          $exeFile = Get-Item *.exe | Where-Object { $_.Attributes -notlike "*Directory*" } | Select-Object -First 1
+          
+          if ($exeFile) {
+              Copy-Item $exeFile.Name "../../SimpBangumi_${{ github.ref_name }}_Portable.exe"
+              Write-Host "成功捕获并复制免安装版: $($exeFile.Name)"
+          } else {
+              Write-Error "未能在 target/release 目录下找到任何核心 .exe 文件！"
+              exit 1
+          }
           
       - name: Upload Portable Exe to Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: src-tauri/target/release/SimpBangumi_${{ github.ref_name }}_Portable.exe
+          files: SimpBangumi_${{ github.ref_name }}_Portable.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

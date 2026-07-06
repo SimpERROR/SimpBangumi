@@ -23,6 +23,7 @@ import {
   type UserSubjectEpisodeCollectionsParams,
   type UserSubjectCollectionModifyPayload,
   type WebCookieStatus,
+  type WebCookieValidationStatus,
   type WorkerOAuthTokenRequest,
 } from "../api/bangumi";
 
@@ -294,6 +295,30 @@ export function useBangumi() {
     }
   }
 
+  async function refreshWebCookie(): Promise<ApiResult<WebCookieStatus>> {
+    try {
+      return ok(await bangumiApi.refreshWebCookie());
+    } catch (error) {
+      return fail<WebCookieStatus>(error);
+    }
+  }
+
+  async function validateWebCookie(): Promise<ApiResult<WebCookieValidationStatus>> {
+    try {
+      return ok(await bangumiApi.validateWebCookie());
+    } catch (error) {
+      return fail<WebCookieValidationStatus>(error);
+    }
+  }
+
+  async function restoreWebCookieFromEmbeddedSession(): Promise<ApiResult<WebCookieStatus>> {
+    try {
+      return ok(await bangumiApi.restoreWebCookieFromEmbeddedSession());
+    } catch (error) {
+      return fail<WebCookieStatus>(error);
+    }
+  }
+
   async function openEmbeddedWebLogin(): Promise<ApiResult<null>> {
     try {
       return ok(await bangumiApi.openEmbeddedWebLogin());
@@ -324,6 +349,9 @@ export function useBangumi() {
     getWebCookieStatus,
     saveWebCookie,
     clearWebCookie,
+    refreshWebCookie,
+    validateWebCookie,
+    restoreWebCookieFromEmbeddedSession,
     openEmbeddedWebLogin,
     captureEmbeddedWebCookie,
     getSubjectDetail,

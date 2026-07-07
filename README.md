@@ -18,9 +18,6 @@
   一个基于 <b>Tauri v2</b> + <b>Rust</b> + <b>Vue3</b> 构建的 <a href="https://bgm.tv">Bangumi 番组计划</a> 非官方桌面客户端。
 </p>
 
-> [!NOTE]
-> 本项目目前处于 Beta 阶段，欢迎下载体验并提交 Issue！
-
 ## 开源协议
 本项目采用 GNU General Public License v3.0 (GPL-3.0) 协议开源，详细信息请参阅 LICENSE 文件。
 

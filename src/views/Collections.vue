@@ -9,6 +9,7 @@ import BroadcastProgress from "../components/BroadcastProgress.vue";
 import ScoreDebugPanel from "../components/ScoreDebugPanel.vue";
 import { formatReadableDateTime } from "../utils/datetime";
 import { matchAnimeToTenrai, getCachedMatch, searchTenraiForMatch, fetchMalAnimeFull, setManualMatch, isSuppressed, suppressBgmId, unsuppressBgmId, shouldConfirmMatch, confirmBgmId, type AnimeMatchInfo } from "../utils/animeMatch";
+import { TenraiApi } from "../api/Tenrai";
 import { isTimeMismatch } from "../utils/timeCheck";
 import type {
   BangumiUser,
@@ -259,6 +260,7 @@ const episodePopoverPlacement = ref<
 // ── Tenrai / broadcast match ──
 const TenraiMatch = ref<AnimeMatchInfo | null>(null);
 const TenraiMatchLoading = ref(false);
+const TenraiMatchRefreshing = ref(false);
 const TenraiMatchError = ref("");
 const detailMoreMenuOpen = ref(false);
 const detailMoreMenuRef = ref<HTMLElement | null>(null);
@@ -363,7 +365,8 @@ async function lookupByMalId() {
   TenraiManualDialog.results = [];
 
   try {
-    const fullData = await fetchMalAnimeFull(malId);
+    const response = await TenraiApi.getAnimeFull(malId);
+    const fullData = response.data;
     if (!fullData) {
       TenraiManualDialog.error = `未找到 MAL #${malId} 的条目数据。`;
       TenraiManualDialog.malIdLoading = false;
@@ -401,21 +404,24 @@ async function confirmTenraiManualMatch() {
   TenraiManualDialog.error = "";
 
   try {
-    const fullData = await fetchMalAnimeFull(malId);
+    const response = await TenraiApi.getAnimeFull(malId);
+    const fullData = response.data;
     if (!fullData) {
       TenraiManualDialog.error = "获取 Tenrai 完整数据失败。";
       TenraiManualDialog.confirming = false;
       return;
     }
+    const detailSource = "tenrai";
     setManualMatch(bgmId, {
       bgmId,
       malId,
       data: fullData,
       cachedAt: Date.now(),
-      locked: false,
+      detailFetchedAt: Date.now(),
+      detailSource,
       candidates: [],
     });
-    TenraiMatch.value = { bgmId, malId, data: fullData, cachedAt: Date.now(), locked: false, candidates: [] };
+    TenraiMatch.value = { bgmId, malId, data: fullData, cachedAt: Date.now(), detailFetchedAt: Date.now(), detailSource, candidates: [] };
     TenraiMatchError.value = "";
     closeTenraiManualDialog();
   } catch (e) {
@@ -1749,9 +1755,10 @@ async function loadSubjectDetail(subjectId: number, prefetchedDetail?: SubjectDe
 }
 
 async function triggerTenraiMatch(bgmId: number, bgmName: string, bgmAirDate?: string, bgmImages?: Record<string, string | undefined>) {
-  // Respect user suppression and time mismatch
-  if (isSuppressed(bgmId) || isTimeMismatch()) {
+  // Respect global disable, user suppression, and time mismatch
+  if (localStorage.getItem("bangumi.broadcast.disabled") === "1" || isSuppressed(bgmId) || isTimeMismatch()) {
     TenraiMatchLoading.value = false;
+    TenraiMatchRefreshing.value = false;
     TenraiMatch.value = null;
     TenraiMatchError.value = "";
     return;
@@ -1763,16 +1770,19 @@ async function triggerTenraiMatch(bgmId: number, bgmName: string, bgmAirDate?: s
 
   // Check cache first
   const cached = getCachedMatch(bgmId);
+  const currentSource = localStorage.getItem("bangumi.broadcast.detailSource") || "tenrai";
   if (cached) {
-    TenraiMatch.value = cached;
-    TenraiMatchLoading.value = false;
-    // If cached data is null, try to refresh
-    if (!cached.data) {
-      const fresh = await fetchMalAnimeFull(cached.malId);
-      if (fresh) {
-        TenraiMatch.value = { ...cached, data: fresh, cachedAt: Date.now() };
-      }
+    // Always re-fetch detail data on every page entry
+    TenraiMatchRefreshing.value = true;
+    const fresh = await fetchMalAnimeFull(cached.malId);
+    TenraiMatchRefreshing.value = false;
+    if (fresh) {
+      TenraiMatch.value = { ...cached, data: fresh, cachedAt: Date.now(), detailFetchedAt: Date.now(), detailSource: currentSource };
+    } else {
+      // Fetch failed — show cached data as fallback
+      TenraiMatch.value = cached;
     }
+    TenraiMatchLoading.value = false;
     return;
   }
 
@@ -2280,12 +2290,16 @@ defineExpose({
             <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.score ?? '-' }}</span>
           </div>
           <div class="Tenrai-view-match__row">
-            <span class="Tenrai-view-match__label">匹配方式</span>
-            <span class="Tenrai-view-match__value">{{ TenraiMatch.locked ? '🔒 锁死（年+集精确）' : '评分匹配' }}</span>
+            <span class="Tenrai-view-match__label">匹配缓存时间</span>
+            <span class="Tenrai-view-match__value">{{ new Date(TenraiMatch.cachedAt).toLocaleString('zh-CN') }}</span>
           </div>
           <div class="Tenrai-view-match__row">
-            <span class="Tenrai-view-match__label">缓存时间</span>
-            <span class="Tenrai-view-match__value">{{ new Date(TenraiMatch.cachedAt).toLocaleString('zh-CN') }}</span>
+            <span class="Tenrai-view-match__label">详细数据更新时间</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.detailFetchedAt ? new Date(TenraiMatch.detailFetchedAt).toLocaleString('zh-CN') : '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">详细数据来源</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.detailSource === 'mal' ? 'MAL 官网爬取' : 'Tenrai API' }}</span>
           </div>
         </div>
       </template>
@@ -2456,6 +2470,7 @@ defineExpose({
         v-if="detailPage === 'subject' && detail?.type === 2 && TenraiMatchError !== 'auto-fail' && !isTimeMismatch()"
         :Tenrai-data="TenraiMatch?.data ?? null"
         :loading="TenraiMatchLoading"
+        :refreshing="TenraiMatchRefreshing"
       />
 
       <!-- Auto-match failed prompt -->
@@ -3274,7 +3289,6 @@ defineExpose({
       v-if="TenraiDebugScore && TenraiMatch?.candidates && TenraiMatch.candidates.length > 0"
       :candidates="TenraiMatch.candidates"
       :bgm-name="detail?.name ?? ''"
-      :locked="TenraiMatch.locked"
     />
   </aside>
 </template>

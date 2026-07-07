@@ -1,6 +1,7 @@
 import { TenraiApi, type TenraiAnimeFull, type TenraiAnimeSearchItem } from "../api/Tenrai";
 import { compareImages, TenraiImageUrl, bgmImageUrl } from "./imageCompare";
 import { toRomaji, romajiTitleScore } from "./romaji";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface ScoreBreakdown {
   year: { score: number; bgmYear: number | null; TenraiYear: number | null };
@@ -26,8 +27,10 @@ export interface AnimeMatchInfo {
   data: TenraiAnimeFull | null;
   /** Timestamp when this match was cached */
   cachedAt: number;
-  /** Whether the match was locked (year+eps exact) */
-  locked: boolean;
+  /** Timestamp when detail data was last fetched */
+  detailFetchedAt?: number;
+  /** Data source used for full anime details */
+  detailSource?: string;
   /** All candidates with their scores (for debug panel) */
   candidates?: ScoredCandidate[];
 }
@@ -35,12 +38,11 @@ export interface AnimeMatchInfo {
 const MATCH_CACHE_KEY = "bangumi.Tenrai.matchMap";
 const SUPPRESSED_KEY = "bangumi.Tenrai.suppressed";
 const CONFIRMED_KEY = "bangumi.Tenrai.confirmed";
+const DETAIL_SOURCE_KEY = "bangumi.broadcast.detailSource";
 const MIN_MATCH_SCORE = 50;
 
-/** Gap between #1 and #2 scores below which we ask for manual confirmation */
 const CONFIRM_SCORE_GAP = 25;
-/** Top score below which we ask for manual confirmation (even if gap is large) */
-const CONFIRM_MIN_SCORE = 80;
+const CONFIRM_MIN_SCORE = 90;
 
 function loadMatchCache(): Record<number, AnimeMatchInfo> {
   try {
@@ -72,46 +74,25 @@ function TenraiYear(item: TenraiAnimeSearchItem): number | null {
   return item.aired?.prop?.from?.year ?? null;
 }
 
-/**
- * Locked match: year AND episodes both match exactly.
- * Returns the MAL ID if found, null otherwise.
- */
-function tryLockMatch(
-  candidates: TenraiAnimeSearchItem[],
-  bgmYear: number | null,
-  bgmEpisodes: number | null,
-): number | null {
-  if (bgmYear === null || bgmEpisodes === null || bgmEpisodes <= 0) {
-    return null;
-  }
-
-  const exact = candidates.find(
-    (item) =>
-      item.episodes === bgmEpisodes &&
-      TenraiYear(item) === bgmYear,
-  );
-
-  return exact?.mal_id ?? null;
-}
-
 function matchScoreDetail(candidate: TenraiAnimeSearchItem, bgmName: string, bgmYear?: number | null, bgmEpisodes?: number | null): ScoreBreakdown {
   const jYear = TenraiYear(candidate);
   let yearScore = 0;
   if (bgmYear !== null && bgmYear !== undefined && jYear === bgmYear) {
-    yearScore = 60;
+    yearScore = 100;
   } else if (bgmYear !== null && bgmYear !== undefined && jYear !== null) {
     const diff = Math.abs(jYear - bgmYear);
-    if (diff === 1) yearScore = 25;
-    else if (diff === 2) yearScore = 10;
+    if (diff === 1) yearScore = 40;
+    else if (diff === 2) yearScore = 20;
+    else yearScore = -20;
   }
 
   let epScore = 0;
   if (bgmEpisodes !== null && bgmEpisodes !== undefined && bgmEpisodes > 0 && candidate.episodes === bgmEpisodes) {
-    epScore = 100;
+    epScore = 20;
   } else if (bgmEpisodes !== null && bgmEpisodes !== undefined && bgmEpisodes > 0 && candidate.episodes !== null) {
     const diff = Math.abs(candidate.episodes - bgmEpisodes);
-    if (diff <= 2) epScore = 40;
-    else if (diff <= 5) epScore = 20;
+    if (diff <= 2) epScore = 10;
+    else if (diff <= 5) epScore = 5;
   }
 
   const typeScore = candidate.type === "TV" ? 30 : 0;
@@ -182,57 +163,42 @@ export async function matchAnimeToTenrai(
       return true;
     });
 
-    // ── Step 1: try LOCK (year + episodes exact match) ──
-    const lockedMalId = tryLockMatch(uniqueResults, bgmYear, eps);
-    let bestMalId: number;
-    let locked = false;
-    let scoredCandidates: ScoredCandidate[] = [];
+    // ── Score all candidates ──
+    let scoredCandidates: ScoredCandidate[] = uniqueResults
+      .map((item) => ({ item, score: matchScoreDetail(item, bgmName, bgmYear, eps) }))
+      .sort((a, b) => b.score.total - a.score.total);
 
-    if (lockedMalId !== null) {
-      bestMalId = lockedMalId;
-      locked = true;
-      // Still score all candidates for debug panel
-      scoredCandidates = uniqueResults
-        .map((item) => ({ item, score: matchScoreDetail(item, bgmName, bgmYear, eps) }))
-        .sort((a, b) => b.score.total - a.score.total);
-    } else {
-      // ── Step 2: fallback to scoring ──
-      scoredCandidates = uniqueResults
-        .map((item) => ({ item, score: matchScoreDetail(item, bgmName, bgmYear, eps) }))
-        .sort((a, b) => b.score.total - a.score.total);
+    // ── Image comparison for top 5 candidates ──
+    const bgmUrl = bgmImageUrl(bgmImages);
+    const topForImage = scoredCandidates.slice(0, 5);
+    const imageScores = await Promise.all(
+      topForImage.map((sc) =>
+        compareImages(bgmUrl, TenraiImageUrl(sc.item.images)).then((result) => {
+          if (result !== null) {
+            sc.score.image.score = result.score;
+            sc.score.image.distance = result.distance;
+            sc.score.total += result.score;
+          }
+        }),
+      ),
+    );
+    await Promise.allSettled(imageScores);
 
-      // ── Step 3: image comparison for top 5 candidates ──
-      const bgmUrl = bgmImageUrl(bgmImages);
-      const topForImage = scoredCandidates.slice(0, 5);
-      const imageScores = await Promise.all(
-        topForImage.map((sc) =>
-          compareImages(bgmUrl, TenraiImageUrl(sc.item.images)).then((result) => {
-            if (result !== null) {
-              sc.score.image.score = result.score;
-              sc.score.image.distance = result.distance;
-              sc.score.total += result.score;
-            }
-          }),
-        ),
-      );
-      // Ensure all image comparisons finish (they resolve void regardless)
-      await Promise.allSettled(imageScores);
+    // Re-sort with image scores
+    scoredCandidates.sort((a, b) => b.score.total - a.score.total);
 
-      // Re-sort with image scores
-      scoredCandidates.sort((a, b) => b.score.total - a.score.total);
-
-      const best = scoredCandidates[0];
-      if (!best || best.score.total < MIN_MATCH_SCORE) {
-        return null;
-      }
-      bestMalId = best.item.mal_id;
+    const best = scoredCandidates[0];
+    if (!best || best.score.total < MIN_MATCH_SCORE) {
+      return null;
     }
+    const bestMalId = best.item.mal_id;
+
+    const detailSource = (localStorage.getItem(DETAIL_SOURCE_KEY) || "tenrai");
 
     // Fetch full anime data for broadcast info
     let fullData: TenraiAnimeFull | null = null;
     try {
-      const fullResponse = await TenraiApi.getAnimeFull(bestMalId);
-      fullData = fullResponse.data;
+      fullData = await fetchMalAnimeFull(bestMalId);
     } catch {
       // Full data fetch failed, but we still have the match
     }
@@ -242,8 +208,9 @@ export async function matchAnimeToTenrai(
       malId: bestMalId,
       data: fullData,
       cachedAt: Date.now(),
-      locked,
-      candidates: scoredCandidates.slice(0, 20), // keep top 20 for debug
+      detailFetchedAt: fullData ? Date.now() : undefined,
+      detailSource,
+      candidates: scoredCandidates.slice(0, 20),
     };
 
     // Save to cache
@@ -289,14 +256,94 @@ export async function searchTenraiForMatch(
 }
 
 /**
- * Fetch full Tenrai info for a given MAL ID.
+ * Fetch full anime info for a given MAL ID, respecting user's data source preference.
  */
 export async function fetchMalAnimeFull(
   malId: number,
 ): Promise<TenraiAnimeFull | null> {
+  const source = localStorage.getItem(DETAIL_SOURCE_KEY) || "tenrai";
+  if (source === "mal") {
+    return fetchMalAnimeFullViaScraping(malId);
+  }
   try {
     const response = await TenraiApi.getAnimeFull(malId);
     return response.data;
+  } catch {
+    return null;
+  }
+}
+
+/** Raw MAL scraper result from Rust backend */
+interface MalScrapeResult {
+  mal_id: number;
+  title: string;
+  title_english: string | null;
+  title_japanese: string | null;
+  status: string | null;
+  episodes: number | null;
+  duration: string | null;
+  broadcast_day: string | null;
+  broadcast_time: string | null;
+  aired_from: string | null;
+  aired_to: string | null;
+  score: number | null;
+}
+
+/** Convert MAL scraped data to TenraiAnimeFull format */
+function malToTenraiFull(mal: MalScrapeResult): TenraiAnimeFull {
+  const broadcastStr =
+    mal.broadcast_day && mal.broadcast_time
+      ? `${mal.broadcast_day} at ${mal.broadcast_time} (JST)`
+      : null;
+  return {
+    mal_id: mal.mal_id,
+    url: `https://myanimelist.net/anime/${mal.mal_id}`,
+    title: mal.title,
+    title_english: mal.title_english ?? null,
+    title_japanese: mal.title_japanese ?? null,
+    type: null,
+    status: mal.status ?? null,
+    episodes: mal.episodes ?? null,
+    aired: {
+      from: mal.aired_from ?? null,
+      to: mal.aired_to ?? null,
+      prop: {
+        from: { day: null, month: null, year: null },
+        to: { day: null, month: null, year: null },
+      },
+      string: [mal.aired_from, mal.aired_to].filter(Boolean).join(" to ") || null,
+    },
+    duration: mal.duration ?? null,
+    rating: null,
+    score: mal.score ?? null,
+    broadcast: {
+      day: mal.broadcast_day ?? null,
+      time: mal.broadcast_time ?? null,
+      timezone: "JST",
+      string: broadcastStr,
+    },
+    synopsis: null,
+    images: {
+      jpg: {
+        image_url: null,
+        small_image_url: null,
+        large_image_url: null,
+      },
+      webp: {
+        image_url: null,
+        small_image_url: null,
+        large_image_url: null,
+      },
+    },
+  };
+}
+
+async function fetchMalAnimeFullViaScraping(
+  malId: number,
+): Promise<TenraiAnimeFull | null> {
+  try {
+    const raw: MalScrapeResult = await invoke("mal_scrape_anime", { malId });
+    return malToTenraiFull(raw);
   } catch {
     return null;
   }
@@ -397,10 +444,9 @@ export function confirmBgmId(bgmId: number): void {
  * - Top 2 scores are within CONFIRM_SCORE_GAP (close race), OR
  * - Top score is below CONFIRM_MIN_SCORE (weak match)
  *
- * Does NOT trigger for locked matches (year+eps exact).
+ * Checks score gap and minimum thresholds.
  */
 export function shouldConfirmMatch(match: AnimeMatchInfo): boolean {
-  if (match.locked) return false;
   if (isConfirmed(match.bgmId)) return false;
 
   const candidates = match.candidates;

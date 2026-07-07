@@ -9,6 +9,7 @@ import {
 const props = defineProps<{
   TenraiData: TenraiAnimeFull | null;
   loading: boolean;
+  refreshing?: boolean;
 }>();
 
 const now = ref(Date.now());
@@ -40,12 +41,14 @@ watch(
 
 const timing = computed<BroadcastTiming | null>(() => {
   if (!props.TenraiData) return null;
+  const currentTime = new Date(now.value);
   return calculateBroadcast(
     props.TenraiData.broadcast,
     props.TenraiData.status,
     props.TenraiData.duration,
     props.TenraiData.aired?.from ?? null,
     props.TenraiData.aired?.to ?? null,
+    currentTime,
   );
 });
 
@@ -74,7 +77,7 @@ const showBanner = computed(() => timing.value !== null);
   </div>
   <div v-else-if="loading" class="broadcast-banner broadcast--loading">
     <div class="broadcast-banner__text">
-      <p class="broadcast-banner__title">正在匹配配信信息...</p>
+      <p class="broadcast-banner__title">{{ refreshing ? '正在加载配信信息...' : '正在匹配配信信息...' }}</p>
     </div>
   </div>
 </template>

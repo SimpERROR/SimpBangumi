@@ -1,6 +1,7 @@
 mod auth;
 mod bangumi;
 mod diagnostics;
+mod mal_scraper;
 
 use std::collections::BTreeMap;
 
@@ -1204,7 +1205,8 @@ pub fn run() {
             bangumi_refresh_web_cookie,
             bangumi_open_embedded_web_login,
             bangumi_capture_embedded_web_cookie,
-            diagnostics::export_diagnostics
+            diagnostics::export_diagnostics,
+            mal_scraper::mal_scrape_anime
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

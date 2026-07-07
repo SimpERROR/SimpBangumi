@@ -573,6 +573,12 @@ h1 {
   font-weight: 700;
 }
 
+.settings-entry__fixed {
+  align-self: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .settings-about-list {
   display: grid;
   gap: 8px;

@@ -5,7 +5,6 @@ import type { ScoredCandidate } from "../utils/animeMatch";
 const props = defineProps<{
   candidates: ScoredCandidate[];
   bgmName: string;
-  locked: boolean;
 }>();
 
 const visible = ref(true);
@@ -61,7 +60,6 @@ function formatScoreItem(label: string, detail: { score: number; bgmYear?: numbe
     <div class="debug-panel__header">
       <span class="debug-panel__title">
         MAL 匹配 · {{ bgmName.slice(0, 14) }}{{ bgmName.length > 14 ? '…' : '' }}
-        <template v-if="locked">🔒</template>
       </span>
       <button class="debug-panel__close" type="button" @click="visible = false">✕</button>
     </div>

@@ -155,13 +155,16 @@ async function handleOpenExportFolder() {
       <section class="modal">
         <h3>导出诊断信息</h3>
         <p>
-          诊断信息将用于帮助我们排查软件运行中的异常。导出的文件可能包含：应用日志、系统版本、网络状态以及部分<strong>脱敏</strong>的配置文件。
+          诊断信息将用于帮助我们排查软件运行中的异常。导出的文件可能包含：应用日志、系统版本、网络状态以及部分<strong>脱敏</strong>的配置文件摘要。
         </p>
         <p>
-          即使经过脱敏，但为了您的隐私安全，请勿将包含敏感 Token 或个人隐私的日志公开上传到公共讨论区。
+          即使经过脱敏，但为了您的隐私安全，请勿将敏感 Token 或个人隐私公开上传到公共讨论区。
         </p>
         <p>
-          所有敏感信息（Token、Authorization 头、用户路径）将在导出前被自动脱敏处理。您亦可以在使用前，自行审阅编辑敏感信息。
+          多数敏感信息将在导出前被自动脱敏处理。您亦可以在使用前，自行审阅并编辑本文件。
+        </p>
+        <p>
+          导出期间弹出命令行窗口是正常程序行为。除非您手动上传，生成的诊断文件不会因 SimpBangumi 而离开您的电脑。
         </p>
         <div class="modal__actions">
           <button class="secondary-button" type="button" @click="handleCancelExport">

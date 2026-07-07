@@ -17,9 +17,6 @@
   An unofficial desktop client for <a href="https://bgm.tv">Bangumi</a> built with <b>Tauri v2</b> + <b>Rust</b> + <b>Vue3</b>.
 </p>
 
-> [!NOTE]
-> This project is currently in the Beta stage. Feel free to download, experience it, and submit Issues!
-
 ## License
 This project is open-sourced under the GNU General Public License v3.0 (GPL-3.0). For more details, please refer to the LICENSE file.
 

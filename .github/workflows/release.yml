@@ -1,4 +1,4 @@
-name: "Publish Release"
+name: Publish Release
 
 on:
   push:
@@ -10,12 +10,7 @@ jobs:
   publish-tauri:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest] 
-
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -31,38 +26,40 @@ jobs:
         uses: swatinem/rust-cache@v2
 
       - name: install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build and Release Base
-        id: tauri_build
+      - name: Get version number
+        id: version_env
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          PURE_VERSION="${TAG_NAME#[vV]}"
+          echo "version=$PURE_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Overwrite version in tauri.conf.json
+        shell: bash
+        run: |
+          NEW_VER="${{ steps.version_env.outputs.version }}"
+          jq --arg ver "$NEW_VER" '.version = $ver' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
+      - name: Overwrite version in package.json
+        shell: bash
+        run: |
+          NEW_VER="${{ steps.version_env.outputs.version }}"
+          jq --arg ver "$NEW_VER" '.version = $ver' package.json > tmp.json && mv tmp.json package.json
+
+      - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "${{ github.ref_name }}"
-          releaseBody: "SimpBangumi 自动发布的版本。如果你不想安装，请下载绿色免安装版 (`_Portable.exe`)。"
+          releaseName: ${{ github.ref_name }}
+          releaseBody: | 
+            <img width="89" height="89" alt="Square89x89Logo" src="https://github.com/user-attachments/assets/3fd83aff-b7a7-45f5-b739-b06e235b0661" />
+
+            ## **SimpBangumi** by SimpERROR_
+
+            非官方客户端。
           releaseDraft: true
           prerelease: false
-
-      - name: Prepare Portable Exe
-        shell: powershell
-        run: |
-          cd src-tauri/target/release
-          $exeFile = Get-Item *.exe | Where-Object { $_.Attributes -notlike "*Directory*" } | Select-Object -First 1
-          
-          if ($exeFile) {
-              Copy-Item $exeFile.Name "../../SimpBangumi_${{ github.ref_name }}_Portable.exe"
-              Write-Host "成功捕获并复制免安装版: $($exeFile.Name)"
-          } else {
-              Write-Error "未能在 target/release 目录下找到任何核心 .exe 文件！"
-              exit 1
-          }
-          
-      - name: Upload Portable Exe to Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: SimpBangumi_${{ github.ref_name }}_Portable.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

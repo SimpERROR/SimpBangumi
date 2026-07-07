@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const emit = defineEmits<{
-  (event: "open-page", page: "display" | "web-login" | "about"): void;
+  (event: "open-page", page: "display" | "web-login" | "about" | "developer"): void;
 }>();
 
 function openDisplaySettings() {
@@ -13,6 +13,10 @@ function openAboutSettings() {
 
 function openWebLoginSettings() {
   emit("open-page", "web-login");
+}
+
+function openDeveloperSettings() {
+  emit("open-page", "developer");
 }
 </script>
 
@@ -41,6 +45,14 @@ function openWebLoginSettings() {
         <div class="settings-entry__content">
           <h3>关于</h3>
           <p>查看应用信息、技术栈和开源协议。</p>
+        </div>
+        <span class="settings-entry__chevron" aria-hidden="true">></span>
+      </button>
+
+      <button class="item item--button settings-entry" type="button" @click="openDeveloperSettings">
+        <div class="settings-entry__content">
+          <h3>开发者选项</h3>
+          <p>调试工具和高级功能。</p>
         </div>
         <span class="settings-entry__chevron" aria-hidden="true">></span>
       </button>

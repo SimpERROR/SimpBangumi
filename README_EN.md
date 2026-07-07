@@ -15,20 +15,23 @@
 </p>
 
 <p align="center">
-  A modern desktop client for <a href="https://bgm.tv">Bangumi</a>, built with <b>Tauri v2</b> + <b>Rust</b> + <b>Vue3</b>.
+  An unofficial desktop client for <a href="https://bgm.tv">Bangumi</a> built with <b>Tauri v2</b> + <b>Rust</b> + <b>Vue3</b>.
 </p>
 
 > [!NOTE]
-> This project is currently in the **Beta** stage. Feel free to download, experience, and submit Issues!
+> This project is currently in the Beta stage. Feel free to download, experience it, and submit Issues!
 
 ## License
+This project is open-sourced under the GNU General Public License v3.0 (GPL-3.0). For more details, please refer to the LICENSE file.
 
-This project is open-sourced under the **GNU General Public License v3.0 (GPL-3.0)**. For more details, please refer to the LICENSE file.
+## Acknowledgements & Credits
+Without them, SimpBangumi would not have been possible.
 
-## Credits & Open Source Acknowledgments
+- Special thanks to [Bangumi](https://bgm.tv) for providing their official public API.
+- Grateful to the [Tauri](https://tauri.app/), [Rust](https://www.rust-lang.org/), and [Vue3](https://vuejs.org/) communities for their excellent low-level support.
+- Thanks to [Live2D Cubism SDK](https://www.live2d.com) for providing the rendering engine.
+- Thanks to [Tenrai API](https://api.tenrai.org) for providing additional anime information.
+- Thanks to [Font Awesome](https://fontawesome.com) for the icon sets.
+- This project utilizes numerous outstanding open-source third-party dependencies (licensed under MIT, Apache 2.0, BSD, etc.). We extend our highest respect and gratitude to all the developers of these underlying projects.
 
-- **Data Support**: Special thanks to the [Bangumi](https://bgm.tv) team for providing the official public APIs.
-- **Core Tech Stack**: Deep gratitude to the [Tauri](https://tauri.app/), [Rust](https://www.rust-lang.org/), and [Vue3](https://vuejs.org/) communities for their excellent underlying support.
-- **Third-Party Dependencies**: This project utilizes numerous outstanding open-source third-party components (licensed under MIT, Apache 2.0, BSD, etc.) during its build process. We extend our highest respect and gratitude to all the developers of these underlying dependencies.
-
-*Without them, **SimpBangumi** would not exist.*
+SimpBangumi does NOT embed, provide, or distribute any Live2D character models or the Live2D Cubism SDK core runtime. All related assets must be legally prepared by the user and loaded manually.

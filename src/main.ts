@@ -3,6 +3,7 @@ import App from "./App.vue";
 import "./styles.css";
 import { initializeWindowState } from "./tauri/windowControls";
 import { useAppStore, type ThemeMode } from "./stores/app";
+import { installDiagnosticsErrorListeners } from "./composables/useDiagnostics";
 
 const THEME_KEY = "bangumi.theme";
 
@@ -25,6 +26,7 @@ function applyInitialTheme() {
 }
 
 applyInitialTheme();
+installDiagnosticsErrorListeners();
 
 createApp(App).mount("#app");
 document.documentElement.classList.remove("app-booting");

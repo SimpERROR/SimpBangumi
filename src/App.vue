@@ -4,6 +4,7 @@ import TitleBar from "./components/TitleBar.vue";
 import Pager from "./components/Pager.vue";
 import CompleteView from "./views/Complete.vue";
 import CollectionsView from "./views/Collections.vue";
+import ScheduleView from "./views/Schedule.vue";
 import SearchView from "./views/Search.vue";
 import SettingsView from "./views/Settings.vue";
 import {
@@ -21,6 +22,7 @@ import { usePagination } from "./composables/usePagination";
 import { invoke } from "@tauri-apps/api/core";
 import type { Live2dModelInfo } from "./stores/app";
 import Live2dCompanion from "./components/Live2dCompanion.vue";
+import { checkTimeDrift, setTimeMismatch } from "./utils/timeCheck";
 
 type OnboardingReason = "first-launch" | "session-expired";
 
@@ -58,20 +60,25 @@ const completeViewRef = ref<{
 const collectionsViewRef = ref<{
   openDetailBySubjectId: (subjectId: number) => Promise<void>;
 } | null>(null);
+const scheduleViewRef = ref<{
+  refresh: () => Promise<void>;
+} | null>(null);
 
 const pageTitle = computed(() => "Subject Collections");
-const activeHomeTab = ref<"complete" | "collections" | "search" | "settings">("complete");
+const activeHomeTab = ref<"complete" | "collections" | "schedule" | "search" | "settings">("complete");
 
 // Tab indicator sliding animation
 const tabsRef = ref<HTMLElement | null>(null);
 const tabCompleteRef = ref<HTMLElement | null>(null);
 const tabCollectionsRef = ref<HTMLElement | null>(null);
+const tabScheduleRef = ref<HTMLElement | null>(null);
 const tabSearchRef = ref<HTMLElement | null>(null);
 const tabSettingsRef = ref<HTMLElement | null>(null);
 
 const tabRefMap: Record<string, typeof tabCompleteRef> = {
   complete: tabCompleteRef,
   collections: tabCollectionsRef,
+  schedule: tabScheduleRef,
   search: tabSearchRef,
   settings: tabSettingsRef,
 };
@@ -265,15 +272,25 @@ async function handleRefresh() {
 
   if (activeHomeTab.value === "collections") {
     await home.refresh();
+    return;
+  }
+
+  if (activeHomeTab.value === "schedule") {
+    await scheduleViewRef.value?.refresh();
   }
 }
 
-async function activateHomeTab(tab: "complete" | "collections" | "search" | "settings") {
+async function activateHomeTab(tab: "complete" | "collections" | "schedule" | "search" | "settings") {
   activeHomeTab.value = tab;
 
   if (tab === "complete") {
     await nextTick();
     await completeViewRef.value?.refresh();
+  }
+
+  if (tab === "schedule") {
+    await nextTick();
+    await scheduleViewRef.value?.refresh();
   }
 }
 
@@ -516,6 +533,18 @@ onMounted(() => {
 
   nextTick(updateTabIndicator);
   window.addEventListener("resize", updateTabIndicator);
+
+  // Check system clock against network time
+  void checkTimeDrift().then((result) => {
+    if (result && !result.ok) {
+      console.log(`[timeCheck] clock mismatch detected — disabling broadcast tracking`);
+      setTimeMismatch(true);
+      appStore.showToast("机器时间有误！请检查你的机器时间，随后重启应用。", "error", 10_000);
+    } else if (result?.ok) {
+      console.log(`[timeCheck] clock OK`);
+      setTimeMismatch(false);
+    }
+  });
 });
 
 onUnmounted(() => {
@@ -592,6 +621,15 @@ watch(
             @click="activateHomeTab('collections')"
           >
             收藏
+          </button>
+          <button
+            ref="tabScheduleRef"
+            class="tab"
+            :class="{ 'is-active': activeHomeTab === 'schedule' }"
+            type="button"
+            @click="activateHomeTab('schedule')"
+          >
+            排期
           </button>
           <button
             ref="tabSearchRef"
@@ -688,6 +726,9 @@ watch(
 
       <div class="view-host" :class="{ 'view-host--hidden': activeHomeTab !== 'collections' }">
         <CollectionsView ref="collectionsViewRef" />
+      </div>
+      <div v-if="activeHomeTab === 'schedule'" class="view-host view-host--schedule">
+        <ScheduleView ref="scheduleViewRef" @open-subject="handleSearchOpenSubject" />
       </div>
       <div v-if="activeHomeTab === 'search'" class="view-host view-host--search">
         <SearchView @open-subject="handleSearchOpenSubject" />

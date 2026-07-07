@@ -433,7 +433,6 @@ async function loadEpisodeState(subjectId: number) {
 
 async function fetchInProgressCollections() {
   const username = currentUsername.value.trim();
-  const requestUsername = username || "-";
 
   const requestId = ++requestToken;
 
@@ -443,7 +442,7 @@ async function fetchInProgressCollections() {
   const result = await bangumi.getCollections({
     limit: pagination.pageSize,
     offset: pagination.offset.value,
-    username: requestUsername,
+    username: username || undefined,
     type: 3,
     subject_type: subjectTypeFilter.value === "all" ? undefined : subjectTypeFilter.value,
   });

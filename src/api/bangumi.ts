@@ -209,6 +209,39 @@ export interface SearchSubject {
   tags?: SubjectTag[];
 }
 
+export interface CalendarWeekday {
+  en: string;
+  ja: string;
+  zh: string;
+  id: number;
+}
+
+export interface CalendarSubject {
+  id: number;
+  url: string;
+  type: number;
+  name: string;
+  name_cn: string;
+  summary: string;
+  air_date?: string;
+  air_weekday: number;
+  images?: Record<string, string | undefined>;
+  rating?: {
+    total: number;
+    count: Record<string, number>;
+    score: number;
+  };
+  rank?: number;
+  collection?: {
+    doing: number;
+  };
+}
+
+export interface CalendarDay {
+  weekday: CalendarWeekday;
+  items: CalendarSubject[];
+}
+
 export interface RelatedCharacter {
   id: number;
   name: string;
@@ -276,6 +309,26 @@ export interface CharacterDetail {
 }
 
 export class BangumiApiClient {
+  private currentUsername: string | null = null;
+  private currentUsernamePromise: Promise<string> | null = null;
+
+  /** 获取当前登录用户名（带缓存），用于构建需要真实用户名的 API 路径 */
+  private async resolveCurrentUsername(): Promise<string> {
+    if (this.currentUsername) {
+      return this.currentUsername;
+    }
+    if (this.currentUsernamePromise) {
+      return this.currentUsernamePromise;
+    }
+    this.currentUsernamePromise = this.getMe().then((user) => {
+      this.currentUsername = user.username;
+      return user.username;
+    }).finally(() => {
+      this.currentUsernamePromise = null;
+    });
+    return this.currentUsernamePromise;
+  }
+
   getAuthSession(): Promise<AuthSession> {
     return invoke<AuthSession>("bangumi_auth_session");
   }
@@ -341,7 +394,7 @@ export class BangumiApiClient {
   async getSubjectCollections(
     params: SubjectCollectionParams = {},
   ): Promise<PagedResponse<SubjectCollection>> {
-    const username = params.username ?? "-";
+    const username = params.username || await this.resolveCurrentUsername();
     const query = toQuery({
       limit: params.limit,
       offset: params.offset,
@@ -359,8 +412,9 @@ export class BangumiApiClient {
     return this.get<SubjectDetail>(`/v0/subjects/${subjectId}`);
   }
 
-  getCurrentUserSubjectCollection(subjectId: number): Promise<UserSubjectCollection> {
-    return this.get<UserSubjectCollection>(`/v0/users/-/collections/${subjectId}`);
+  async getCurrentUserSubjectCollection(subjectId: number): Promise<UserSubjectCollection> {
+    const username = await this.resolveCurrentUsername();
+    return this.get<UserSubjectCollection>(`/v0/users/${encodeURIComponent(username)}/collections/${subjectId}`);
   }
 
   getSubjectRelatedCharacters(subjectId: number): Promise<RelatedCharacter[]> {
@@ -408,6 +462,10 @@ export class BangumiApiClient {
     payload: UserSubjectCollectionModifyPayload,
   ): Promise<null> {
     return this.request<null>("POST", `/v0/users/-/collections/${subjectId}`, undefined, payload);
+  }
+
+  getCalendar(): Promise<CalendarDay[]> {
+    return this.get<CalendarDay[]>("/calendar");
   }
 
   getEpisodesBySubject(

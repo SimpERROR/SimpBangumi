@@ -243,8 +243,8 @@ function handleRefreshDialog() {
 </template>
 
 <style scoped>
-.settings-toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
-.settings-toggle__label { font-size: 14px; color: var(--text); }
+.settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; user-select: none; }
+.settings-toggle__label { font-size: 14px; color: var(--text); white-space: nowrap; }
 .settings-toggle__input { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
 .settings-toggle__track { position: relative; width: 44px; height: 24px; border-radius: 999px; background: var(--border); transition: background 0.25s ease; flex-shrink: 0; }
 .settings-toggle__track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.15); transition: transform 0.25s ease; }

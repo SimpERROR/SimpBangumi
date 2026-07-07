@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useAppStore } from "../stores/app";
 import { useDataStore } from "../stores/data";
 import { useSessionStore } from "../stores/session";
 import { useBangumi } from "../composables/useBangumi";
 import BbcodeSummary from "../components/BbcodeSummary.vue";
+import BroadcastProgress from "../components/BroadcastProgress.vue";
+import ScoreDebugPanel from "../components/ScoreDebugPanel.vue";
 import { formatReadableDateTime } from "../utils/datetime";
+import { matchAnimeToTenrai, getCachedMatch, searchTenraiForMatch, fetchMalAnimeFull, setManualMatch, isSuppressed, suppressBgmId, unsuppressBgmId, shouldConfirmMatch, confirmBgmId, type AnimeMatchInfo } from "../utils/animeMatch";
+import { isTimeMismatch } from "../utils/timeCheck";
 import type {
   BangumiUser,
   CharacterDetail,
@@ -251,6 +255,174 @@ const episodeTypeById = ref<Record<number, number>>({});
 const episodePopoverPlacement = ref<
   Record<number, { horizontal: "left" | "center" | "right"; vertical: "up" | "down" }>
 >({});
+
+// ── Tenrai / broadcast match ──
+const TenraiMatch = ref<AnimeMatchInfo | null>(null);
+const TenraiMatchLoading = ref(false);
+const TenraiMatchError = ref("");
+const detailMoreMenuOpen = ref(false);
+const detailMoreMenuRef = ref<HTMLElement | null>(null);
+
+const DEBUG_SCORE_KEY = "bangumi.Tenrai.debugScore";
+const TenraiDebugScore = ref(localStorage.getItem(DEBUG_SCORE_KEY) === "1");
+
+// "View matched Tenrai entry" dialog
+const TenraiViewMatchDialog = reactive({
+  visible: false,
+});
+
+// "Confirm auto-match" dialog
+const TenraiConfirmDialog = reactive({
+  visible: false,
+});
+
+function onDetailMoreMenuClickOutside(e: MouseEvent) {
+  if (detailMoreMenuRef.value && !detailMoreMenuRef.value.contains(e.target as Node)) {
+    detailMoreMenuOpen.value = false;
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("click", onDetailMoreMenuClickOutside);
+});
+
+onUnmounted(() => {
+  document.removeEventListener("click", onDetailMoreMenuClickOutside);
+});
+
+// ── Manual match dialog ──
+const TenraiManualDialog = reactive({
+  visible: false,
+  query: "",
+  searching: false,
+  error: "",
+  results: [] as import("../api/Tenrai").TenraiAnimeSearchItem[],
+  selectedMalId: null as number | null,
+  confirming: false,
+  malIdInput: "",
+  malIdLoading: false,
+});
+
+function openTenraiManualDialog() {
+  detailMoreMenuOpen.value = false;
+  TenraiManualDialog.visible = true;
+  TenraiManualDialog.query = detail.value?.name ?? "";
+  TenraiManualDialog.results = [];
+  TenraiManualDialog.error = "";
+  TenraiManualDialog.selectedMalId = null;
+  TenraiManualDialog.confirming = false;
+  TenraiManualDialog.malIdInput = "";
+  // Auto-search with current anime name
+  if (TenraiManualDialog.query) {
+    searchTenraiManual();
+  }
+}
+
+function closeTenraiManualDialog() {
+  TenraiManualDialog.visible = false;
+}
+
+async function searchTenraiManual() {
+  const q = TenraiManualDialog.query.trim();
+  if (!q) {
+    TenraiManualDialog.error = "请输入搜索关键词。";
+    return;
+  }
+  TenraiManualDialog.searching = true;
+  TenraiManualDialog.error = "";
+  TenraiManualDialog.results = [];
+  TenraiManualDialog.selectedMalId = null;
+
+  try {
+    const results = await searchTenraiForMatch(q, 12);
+    TenraiManualDialog.results = results;
+    if (results.length === 0) {
+      TenraiManualDialog.error = "未找到匹配的 MAL 词条，请尝试其他关键词。";
+    }
+  } catch (e) {
+    TenraiManualDialog.error = `搜索失败：${e instanceof Error ? e.message : String(e)}`;
+  }
+  TenraiManualDialog.searching = false;
+}
+
+function selectTenraiCandidate(malId: number) {
+  TenraiManualDialog.selectedMalId = malId;
+}
+
+async function lookupByMalId() {
+  const raw = TenraiManualDialog.malIdInput.trim();
+  if (!raw) return;
+  const malId = Number(raw);
+  if (!Number.isFinite(malId) || malId <= 0 || !Number.isInteger(malId)) {
+    TenraiManualDialog.error = "请输入有效的 MAL 编号（正整数）。";
+    return;
+  }
+
+  TenraiManualDialog.malIdLoading = true;
+  TenraiManualDialog.error = "";
+  TenraiManualDialog.results = [];
+
+  try {
+    const fullData = await fetchMalAnimeFull(malId);
+    if (!fullData) {
+      TenraiManualDialog.error = `未找到 MAL #${malId} 的条目数据。`;
+      TenraiManualDialog.malIdLoading = false;
+      return;
+    }
+    // Show as single result so user can confirm
+    TenraiManualDialog.results = [{
+      mal_id: fullData.mal_id,
+      url: fullData.url,
+      title: fullData.title,
+      title_english: fullData.title_english,
+      title_japanese: fullData.title_japanese,
+      type: fullData.type,
+      episodes: fullData.episodes,
+      status: fullData.status,
+      aired: fullData.aired,
+      duration: fullData.duration,
+      score: fullData.score,
+      synopsis: fullData.synopsis,
+      images: fullData.images,
+    }];
+    TenraiManualDialog.selectedMalId = malId;
+  } catch (e) {
+    TenraiManualDialog.error = `查询失败：${e instanceof Error ? e.message : String(e)}`;
+  }
+  TenraiManualDialog.malIdLoading = false;
+}
+
+async function confirmTenraiManualMatch() {
+  const malId = TenraiManualDialog.selectedMalId;
+  const bgmId = detail.value?.id;
+  if (!malId || !bgmId) return;
+
+  TenraiManualDialog.confirming = true;
+  TenraiManualDialog.error = "";
+
+  try {
+    const fullData = await fetchMalAnimeFull(malId);
+    if (!fullData) {
+      TenraiManualDialog.error = "获取 Tenrai 完整数据失败。";
+      TenraiManualDialog.confirming = false;
+      return;
+    }
+    setManualMatch(bgmId, {
+      bgmId,
+      malId,
+      data: fullData,
+      cachedAt: Date.now(),
+      locked: false,
+      candidates: [],
+    });
+    TenraiMatch.value = { bgmId, malId, data: fullData, cachedAt: Date.now(), locked: false, candidates: [] };
+    TenraiMatchError.value = "";
+    closeTenraiManualDialog();
+  } catch (e) {
+    TenraiManualDialog.error = `保存匹配失败：${e instanceof Error ? e.message : String(e)}`;
+  }
+  TenraiManualDialog.confirming = false;
+}
 
 const form = reactive({
   type: 2,
@@ -1569,6 +1741,81 @@ async function loadSubjectDetail(subjectId: number, prefetchedDetail?: SubjectDe
   await Promise.all(tasks);
 
   detailLoading.value = false;
+
+  // Trigger Tenrai broadcast match for anime subjects
+  if (detail.value?.type === 2) {
+    triggerTenraiMatch(detail.value.id, detail.value.name, detail.value.date, detail.value.images);
+  }
+}
+
+async function triggerTenraiMatch(bgmId: number, bgmName: string, bgmAirDate?: string, bgmImages?: Record<string, string | undefined>) {
+  // Respect user suppression and time mismatch
+  if (isSuppressed(bgmId) || isTimeMismatch()) {
+    TenraiMatchLoading.value = false;
+    TenraiMatch.value = null;
+    TenraiMatchError.value = "";
+    return;
+  }
+
+  TenraiMatchLoading.value = true;
+  TenraiMatchError.value = "";
+  TenraiMatch.value = null;
+
+  // Check cache first
+  const cached = getCachedMatch(bgmId);
+  if (cached) {
+    TenraiMatch.value = cached;
+    TenraiMatchLoading.value = false;
+    // If cached data is null, try to refresh
+    if (!cached.data) {
+      const fresh = await fetchMalAnimeFull(cached.malId);
+      if (fresh) {
+        TenraiMatch.value = { ...cached, data: fresh, cachedAt: Date.now() };
+      }
+    }
+    return;
+  }
+
+  const match = await matchAnimeToTenrai(bgmId, bgmName, bgmAirDate, detail.value?.eps, bgmImages);
+  if (match) {
+    TenraiMatch.value = match;
+    TenraiMatchError.value = "";
+
+    // Prompt for manual confirmation if match is uncertain
+    if (shouldConfirmMatch(match)) {
+      TenraiConfirmDialog.visible = true;
+    }
+  } else {
+    TenraiMatchError.value = "auto-fail";
+  }
+  TenraiMatchLoading.value = false;
+}
+
+function handleConfirmTenraiMatch() {
+  const bgmId = detail.value?.id;
+  if (!bgmId) return;
+  confirmBgmId(bgmId);
+  TenraiConfirmDialog.visible = false;
+}
+
+function handleSuppressTenraiForSubject() {
+  const bgmId = detail.value?.id;
+  if (!bgmId) return;
+  suppressBgmId(bgmId);
+  TenraiMatch.value = null;
+  TenraiMatchLoading.value = false;
+  TenraiMatchError.value = "";
+  TenraiConfirmDialog.visible = false;
+}
+
+function handleEnableTenraiForSubject() {
+  const bgmId = detail.value?.id;
+  if (!bgmId) return;
+  unsuppressBgmId(bgmId);
+  // Re-trigger matching for this subject
+  if (detail.value?.type === 2) {
+    triggerTenraiMatch(bgmId, detail.value.name, detail.value.date, detail.value.images);
+  }
 }
 
 function closeDetail() {
@@ -1577,6 +1824,12 @@ function closeDetail() {
   showDetailBackToTop.value = false;
   appStore.detailBackToTopVisible.value = false;
   appStore.currentDetailNsfw.value = false;
+  TenraiMatch.value = null;
+  TenraiMatchLoading.value = false;
+  TenraiMatchError.value = "";
+  detailMoreMenuOpen.value = false;
+  TenraiViewMatchDialog.visible = false;
+  TenraiConfirmDialog.visible = false;
   closeImagePreview();
   resetPersonDetail();
   resetCharacterDetail();
@@ -1864,6 +2117,243 @@ defineExpose({
     </section>
   </div>
 
+  <!-- Tenrai manual match dialog -->
+  <div v-if="TenraiManualDialog.visible" class="overlay" role="dialog" aria-modal="true" aria-label="匹配 Tenrai 词条" @click.self="closeTenraiManualDialog">
+    <section class="modal Tenrai-match-dialog">
+      <div class="Tenrai-match-dialog__header">
+        <h3>匹配 MAL 词条</h3>
+        <button class="secondary-button" type="button" @click="closeTenraiManualDialog">✕</button>
+      </div>
+
+      <p class="Tenrai-match-dialog__hint">
+        通过匹配 MyAnimeList 词条获取配信时间等额外信息。
+        <template v-if="TenraiMatch?.malId">当前匹配：MAL #{{ TenraiMatch.malId }}</template>
+      </p>
+
+      <!-- Search bar -->
+      <form class="Tenrai-match-dialog__search" @submit.prevent="searchTenraiManual">
+        <input
+          v-model="TenraiManualDialog.query"
+          class="onboarding__input"
+          type="search"
+          placeholder="输入英文/日文名搜索..."
+          :disabled="TenraiManualDialog.searching || TenraiManualDialog.confirming"
+        />
+        <button
+          class="primary-button"
+          type="submit"
+          :disabled="TenraiManualDialog.searching || TenraiManualDialog.confirming || !TenraiManualDialog.query.trim()"
+        >
+          {{ TenraiManualDialog.searching ? "搜索中..." : "搜索" }}
+        </button>
+      </form>
+
+      <!-- MAL ID direct lookup -->
+      <form class="Tenrai-match-dialog__search" @submit.prevent="lookupByMalId">
+        <input
+          v-model="TenraiManualDialog.malIdInput"
+          class="onboarding__input"
+          type="text"
+          inputmode="numeric"
+          placeholder="或直接输入 MAL 编号..."
+          :disabled="TenraiManualDialog.malIdLoading || TenraiManualDialog.confirming"
+        />
+        <button
+          class="secondary-button"
+          type="submit"
+          :disabled="TenraiManualDialog.malIdLoading || TenraiManualDialog.confirming || !TenraiManualDialog.malIdInput.trim()"
+        >
+          {{ TenraiManualDialog.malIdLoading ? "查询中..." : "查询" }}
+        </button>
+      </form>
+
+      <p v-if="TenraiManualDialog.error" class="onboarding__error">{{ TenraiManualDialog.error }}</p>
+
+      <!-- Results list -->
+      <div v-if="TenraiManualDialog.results.length > 0" class="Tenrai-match-dialog__results">
+        <button
+          v-for="item in TenraiManualDialog.results"
+          :key="item.mal_id"
+          class="item item--button Tenrai-match-dialog__candidate"
+          :class="{ 'is-selected': TenraiManualDialog.selectedMalId === item.mal_id }"
+          type="button"
+          :disabled="TenraiManualDialog.confirming"
+          @click="selectTenraiCandidate(item.mal_id)"
+        >
+          <div class="cover">
+            <img
+              v-if="item.images?.jpg?.image_url"
+              :src="item.images.jpg.image_url"
+              alt=""
+              loading="lazy"
+            />
+            <span v-else>MAL</span>
+          </div>
+          <div class="item__main">
+            <h2>{{ item.title }}</h2>
+            <p>
+              <template v-if="item.title_english && item.title_english !== item.title">{{ item.title_english }} · </template>
+              {{ item.type ?? "-" }}
+              <template v-if="item.episodes"> · {{ item.episodes }}集</template>
+              <template v-if="item.status"> · {{ item.status }}</template>
+            </p>
+            <p class="search-item__meta">
+              MAL #{{ item.mal_id }}
+              <template v-if="item.aired?.prop?.from?.year"> · {{ item.aired.prop.from.year }}</template>
+              <template v-if="item.score"> · 评分 {{ item.score }}</template>
+            </p>
+          </div>
+        </button>
+      </div>
+
+      <!-- Empty -->
+      <p v-else-if="!TenraiManualDialog.searching && !TenraiManualDialog.error && TenraiManualDialog.query" class="schedule__empty">
+        无搜索结果。
+      </p>
+
+      <!-- Actions -->
+      <div class="modal__actions">
+        <button class="secondary-button" type="button" @click="closeTenraiManualDialog">取消</button>
+        <button
+          class="primary-button"
+          type="button"
+          :disabled="!TenraiManualDialog.selectedMalId || TenraiManualDialog.confirming"
+          @click="confirmTenraiManualMatch"
+        >
+          {{ TenraiManualDialog.confirming ? "保存中..." : "确认匹配" }}
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <!-- View matched MAL entry dialog -->
+  <div v-if="TenraiViewMatchDialog.visible" class="overlay" role="dialog" aria-modal="true" aria-label="已匹配的 MAL 条目" @click.self="TenraiViewMatchDialog.visible = false">
+    <section class="modal Tenrai-match-dialog">
+      <div class="Tenrai-match-dialog__header">
+        <h3>已匹配的 MAL 条目</h3>
+        <button class="secondary-button" type="button" @click="TenraiViewMatchDialog.visible = false">✕</button>
+      </div>
+
+      <template v-if="TenraiMatch">
+        <div class="Tenrai-view-match__info">
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">MAL ID</span>
+            <a
+              class="Tenrai-view-match__value Tenrai-view-match__link"
+              :href="'https://myanimelist.net/anime/' + TenraiMatch.malId"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              #{{ TenraiMatch.malId }} ↗
+            </a>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">标题</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.title ?? '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">英文标题</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.title_english ?? '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">类型</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.type ?? '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">状态</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.status ?? '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">集数</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.episodes ?? '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">放送时间</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.broadcast?.string ?? '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">时长</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.duration ?? '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">评分</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.data?.score ?? '-' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">匹配方式</span>
+            <span class="Tenrai-view-match__value">{{ TenraiMatch.locked ? '🔒 锁死（年+集精确）' : '评分匹配' }}</span>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">缓存时间</span>
+            <span class="Tenrai-view-match__value">{{ new Date(TenraiMatch.cachedAt).toLocaleString('zh-CN') }}</span>
+          </div>
+        </div>
+      </template>
+      <p v-else class="schedule__empty">暂无已匹配的 MAL 条目。</p>
+
+      <div class="modal__actions">
+        <button class="secondary-button" type="button" @click="TenraiViewMatchDialog.visible = false">关闭</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Confirm auto-match dialog -->
+  <div v-if="TenraiConfirmDialog.visible" class="overlay" role="dialog" aria-modal="true" aria-label="确认自动匹配" @click.self="TenraiConfirmDialog.visible = false">
+    <section class="modal Tenrai-match-dialog">
+      <div class="Tenrai-match-dialog__header">
+        <h3>请仔细确认！</h3>
+        <button class="secondary-button" type="button" @click="TenraiConfirmDialog.visible = false">✕</button>
+      </div>
+
+      <p class="onboarding__description">
+        自动匹配结果不确定，请确认以下匹配是否正确。
+      </p>
+
+      <template v-if="TenraiMatch">
+        <div class="Tenrai-view-match__info">
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">BGM 条目</span>
+            <a
+              class="Tenrai-view-match__value Tenrai-view-match__link"
+              :href="'https://bgm.tv/subject/' + (detail?.id ?? '')"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {{ detail?.name_cn || detail?.name || '-' }} ↗
+            </a>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">匹配 MAL</span>
+            <a
+              class="Tenrai-view-match__value Tenrai-view-match__link"
+              :href="'https://myanimelist.net/anime/' + TenraiMatch.malId"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              #{{ TenraiMatch.malId }} — {{ TenraiMatch.data?.title ?? '-' }} ↗
+            </a>
+          </div>
+          <div class="Tenrai-view-match__row">
+            <span class="Tenrai-view-match__label">总得分</span>
+            <span class="Tenrai-view-match__value">
+              <strong>{{ TenraiMatch.candidates?.[0]?.score?.total ?? '-' }} 分</strong>
+              <template v-if="TenraiMatch.candidates && TenraiMatch.candidates.length > 1">
+                （#2: {{ TenraiMatch.candidates[1].score.total }} 分）
+              </template>
+            </span>
+          </div>
+        </div>
+      </template>
+
+      <div class="modal__actions">
+        <button class="secondary-button" type="button" @click="TenraiConfirmDialog.visible = false">关闭</button>
+        <button class="secondary-button" type="button" @click="handleSuppressTenraiForSubject()">此番剧关闭此功能</button>
+        <button class="secondary-button" type="button" @click="TenraiConfirmDialog.visible = false; openTenraiManualDialog()">手动匹配</button>
+        <button class="primary-button" type="button" @click="handleConfirmTenraiMatch()">确认匹配</button>
+      </div>
+    </section>
+  </div>
+
   <div
     v-if="imagePreviewVisible"
     class="image-preview-overlay"
@@ -1880,7 +2370,54 @@ defineExpose({
   <aside class="detail-drawer" :class="{ 'is-open': detailOpen }" role="dialog" aria-modal="true" aria-label="条目详情">
     <header class="detail-drawer__header">
       <h2>{{ detailTitle || "条目详情" }}</h2>
-      <button class="secondary-button" type="button" @click="closeDetail">关闭</button>
+      <div class="detail-drawer__header-actions">
+        <!-- Tenrai match error indicator -->
+        <button
+          v-if="detailPage === 'subject' && detail?.type === 2 && TenraiMatchError === 'auto-fail' && !TenraiMatchLoading"
+          class="detail-drawer__match-warning detail-drawer__match-warning--action"
+          type="button"
+          title="自动匹配失败，点击手动匹配"
+          @click="openTenraiManualDialog()"
+        >未匹配</button>
+        <div ref="detailMoreMenuRef" class="detail-more-menu" :class="{ 'is-open': detailMoreMenuOpen }">
+          <button
+            class="secondary-button detail-more-menu__trigger"
+            type="button"
+            title="更多操作"
+            @click.stop="detailMoreMenuOpen = !detailMoreMenuOpen"
+          >
+            …
+          </button>
+          <div v-if="detailMoreMenuOpen" class="detail-more-menu__dropdown">
+            <template v-if="detailPage === 'subject' && detail?.type === 2">
+              <button
+                class="detail-more-menu__item"
+                type="button"
+                @click="openTenraiManualDialog()"
+              >
+                匹配 MAL 词条
+              </button>
+              <button
+                v-if="TenraiMatch"
+                class="detail-more-menu__item"
+                type="button"
+                @click="detailMoreMenuOpen = false; TenraiViewMatchDialog.visible = true"
+              >
+                查看已匹配的 MAL 条目
+              </button>
+              <button
+                class="detail-more-menu__item"
+                type="button"
+                @click="detailMoreMenuOpen = false; isSuppressed(detail.id) ? handleEnableTenraiForSubject() : handleSuppressTenraiForSubject()"
+              >
+                {{ isSuppressed(detail.id) ? '为此番剧开启配信跟踪' : '为此番剧关闭配信跟踪' }}
+              </button>
+            </template>
+            <span v-else class="detail-more-menu__empty">此条目无可用选项。</span>
+          </div>
+        </div>
+        <button class="secondary-button" type="button" @click="closeDetail">关闭</button>
+      </div>
     </header>
 
     <section v-if="detailLoading" class="empty">详情加载中...</section>
@@ -1903,6 +2440,38 @@ defineExpose({
           <p>{{ notpreferredSubjectTitle(detail.name, detail.name_cn, `Subject #${detail.id}`) }}</p>
         </div>
       </article>
+
+      <!-- Time mismatch warning (disables broadcast tracking) -->
+      <div v-if="detailPage === 'subject' && detail?.type === 2 && isTimeMismatch()" class="broadcast-banner broadcast--not-aired">
+        <svg class="broadcast-banner__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" aria-hidden="true">
+          <path d="M432 423.8C471.1 391.5 496 342.7 496 288C496 190.8 417.2 112 320 112C222.8 112 144 190.8 144 288C144 342.7 168.9 391.5 208 423.8C208.4 441.4 211.2 464.2 214.4 485.6C144 447.9 96 373.5 96 288C96 164.3 196.3 64 320 64C443.7 64 544 164.3 544 288C544 373.6 496 447.9 425.5 485.6C428.8 464.2 431.5 441.4 431.9 423.8zM418 370.4C409.7 357.8 398.8 348.8 387.6 342.6C385.5 341.5 383.4 340.4 381.3 339.4C393 325.5 400.1 307.5 400.1 287.9C400.1 243.7 364.3 207.9 320.1 207.9C275.9 207.9 240.1 243.7 240.1 287.9C240.1 307.5 247.2 325.5 258.9 339.4C256.8 340.4 254.7 341.4 252.6 342.6C241.4 348.8 230.5 357.8 222.2 370.4C203.4 348.1 192.1 319.4 192.1 288C192.1 217.3 249.4 160 320.1 160C390.8 160 448.1 217.3 448.1 288C448.1 319.4 436.8 348.2 418 370.4zM320 376C352.9 376 384 384.6 384 419.8C384 452.8 371.1 523.9 363.4 552.7C358.3 571.7 338.9 576.1 320 576.1C301.1 576.1 281.8 571.7 276.6 552.7C268.8 524.2 256 453 256 419.9C256 384.8 287.1 376.1 320 376.1zM320 248C342.1 248 360 265.9 360 288C360 310.1 342.1 328 320 328C297.9 328 280 310.1 280 288C280 265.9 297.9 248 320 248z"/>
+        </svg>
+        <div class="broadcast-banner__text">
+          <p class="broadcast-banner__title">机器时间有误！</p>
+          <p class="broadcast-banner__sub">请检查你的机器时间，随后重启应用。配信跟踪已禁用。</p>
+        </div>
+      </div>
+
+      <BroadcastProgress
+        v-if="detailPage === 'subject' && detail?.type === 2 && TenraiMatchError !== 'auto-fail' && !isTimeMismatch()"
+        :Tenrai-data="TenraiMatch?.data ?? null"
+        :loading="TenraiMatchLoading"
+      />
+
+      <!-- Auto-match failed prompt -->
+      <div v-if="detailPage === 'subject' && detail?.type === 2 && TenraiMatchError === 'auto-fail' && !isTimeMismatch()" class="broadcast-banner broadcast--not-aired">
+        <svg class="broadcast-banner__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" aria-hidden="true">
+          <path d="M432 423.8C471.1 391.5 496 342.7 496 288C496 190.8 417.2 112 320 112C222.8 112 144 190.8 144 288C144 342.7 168.9 391.5 208 423.8C208.4 441.4 211.2 464.2 214.4 485.6C144 447.9 96 373.5 96 288C96 164.3 196.3 64 320 64C443.7 64 544 164.3 544 288C544 373.6 496 447.9 425.5 485.6C428.8 464.2 431.5 441.4 431.9 423.8zM418 370.4C409.7 357.8 398.8 348.8 387.6 342.6C385.5 341.5 383.4 340.4 381.3 339.4C393 325.5 400.1 307.5 400.1 287.9C400.1 243.7 364.3 207.9 320.1 207.9C275.9 207.9 240.1 243.7 240.1 287.9C240.1 307.5 247.2 325.5 258.9 339.4C256.8 340.4 254.7 341.4 252.6 342.6C241.4 348.8 230.5 357.8 222.2 370.4C203.4 348.1 192.1 319.4 192.1 288C192.1 217.3 249.4 160 320.1 160C390.8 160 448.1 217.3 448.1 288C448.1 319.4 436.8 348.2 418 370.4zM320 376C352.9 376 384 384.6 384 419.8C384 452.8 371.1 523.9 363.4 552.7C358.3 571.7 338.9 576.1 320 576.1C301.1 576.1 281.8 571.7 276.6 552.7C268.8 524.2 256 453 256 419.9C256 384.8 287.1 376.1 320 376.1zM320 248C342.1 248 360 265.9 360 288C360 310.1 342.1 328 320 328C297.9 328 280 310.1 280 288C280 265.9 297.9 248 320 248z"/>
+        </svg>
+        <div class="broadcast-banner__text">
+          <p class="broadcast-banner__title">自动匹配失败</p>
+          <p class="broadcast-banner__sub">无法自动匹配 MAL 配信信息。</p>
+        </div>
+        <div class="broadcast-banner__actions">
+          <button class="secondary-button" type="button" @click="isSuppressed(detail.id) ? handleEnableTenraiForSubject() : handleSuppressTenraiForSubject()">{{ isSuppressed(detail.id) ? '为此番剧开启' : '为此番剧关闭' }}</button>
+          <button class="secondary-button" type="button" @click="openTenraiManualDialog()">手动匹配</button>
+        </div>
+      </div>
 
       <section v-if="detailPage === 'subject'" class="detail-tabs" role="tablist" aria-label="详情分类">
         <button
@@ -2700,5 +3269,12 @@ defineExpose({
         回到顶部
       </button>
     </section>
+
+    <ScoreDebugPanel
+      v-if="TenraiDebugScore && TenraiMatch?.candidates && TenraiMatch.candidates.length > 0"
+      :candidates="TenraiMatch.candidates"
+      :bgm-name="detail?.name ?? ''"
+      :locked="TenraiMatch.locked"
+    />
   </aside>
 </template>

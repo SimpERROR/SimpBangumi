@@ -22,6 +22,7 @@ import {
   type UserSubjectCollection,
   type UserSubjectEpisodeCollectionsParams,
   type UserSubjectCollectionModifyPayload,
+  type CalendarDay,
   type WebCookieStatus,
   type WebCookieValidationStatus,
   type WorkerOAuthTokenRequest,
@@ -335,7 +336,13 @@ export function useBangumi() {
     }
   }
 
-  
+  async function getCalendar(): Promise<ApiResult<CalendarDay[]>> {
+    try {
+      return ok(await bangumiApi.getCalendar());
+    } catch (error) {
+      return fail<CalendarDay[]>(error);
+    }
+  }
 
   return {
     getSession,
@@ -367,5 +374,6 @@ export function useBangumi() {
     getCurrentUserSubjectEpisodeCollections,
     updateCurrentUserEpisodeCollection,
     searchSubjects,
+    getCalendar,
   };
 }

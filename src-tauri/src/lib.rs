@@ -1,5 +1,6 @@
 mod auth;
 mod bangumi;
+mod diagnostics;
 
 use std::collections::BTreeMap;
 
@@ -90,26 +91,91 @@ fn page_shows_auth_buttons(html: &str) -> bool {
     (has_login_link && has_signup_link) || (has_login_link && has_login_text) || (has_signup_link && has_signup_text)
 }
 
-fn log_info(message: &str) {
-    eprintln!("[tauri] {message}");
+pub(crate) fn log_info(message: &str) {
+    let formatted = format!("[tauri] {message}");
+    push_rust_log(formatted.clone());
+    eprintln!("{formatted}");
 }
 
-fn log_error(message: &str) {
-    eprintln!("[tauri][error] {message}");
+pub(crate) fn log_error(message: &str) {
+    let formatted = format!("[tauri][error] {message}");
+    push_rust_log(formatted.clone());
+    eprintln!("{formatted}");
+}
+
+// ── Rust backend log buffer for diagnostics ──────────────
+
+use std::sync::Mutex;
+
+static RUST_LOG_BUFFER: Mutex<Vec<String>> = Mutex::new(Vec::new());
+const MAX_RUST_LOGS: usize = 500;
+
+fn push_rust_log(line: String) {
+    if let Ok(mut buffer) = RUST_LOG_BUFFER.lock() {
+        if buffer.len() >= MAX_RUST_LOGS {
+            buffer.remove(0);
+        }
+        buffer.push(line);
+    }
+}
+
+pub(crate) fn take_rust_logs() -> Vec<String> {
+    let mut buffer = RUST_LOG_BUFFER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    std::mem::take(&mut *buffer)
+}
+
+/// Send a GET request with the given Cookie header, manually following redirects
+/// while re-attaching the Cookie header on every hop. This avoids reqwest's default
+/// behaviour of stripping the Cookie header on cross-domain redirects (e.g.
+/// bangumi.tv → bgm.tv), which would cause false "cookie expired" results.
+async fn fetch_with_cookie_redirect(
+    client: &reqwest::Client,
+    initial_url: &str,
+    cookie: &str,
+) -> Result<reqwest::Response, String> {
+    let mut url = initial_url.to_string();
+
+    for _ in 0..8 {
+        let response = client
+            .get(&url)
+            .header(reqwest::header::COOKIE, cookie)
+            .send()
+            .await
+            .map_err(|error| format!("Failed to request {url}: {error}"))?;
+
+        let status = response.status();
+        if !status.is_redirection() {
+            return Ok(response);
+        }
+
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .ok_or_else(|| format!("Redirect without Location header from {url}"))?;
+
+        let base = Url::parse(&url)
+            .map_err(|error| format!("Invalid base URL {url}: {error}"))?;
+        url = base
+            .join(&location)
+            .map_err(|error| format!("Invalid redirect location {location}: {error}"))?
+            .to_string();
+    }
+
+    Err("Too many redirects while fetching with cookie".to_string())
 }
 
 async fn validate_cookie_header_against_bangumi(cookie: &str) -> Result<bool, String> {
     let client = reqwest::Client::builder()
         .user_agent(bangumi::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| format!("Failed to build cookie validation HTTP client: {error}"))?;
 
-    let response = client
-        .get("https://bangumi.tv/")
-        .header(reqwest::header::COOKIE, cookie)
-        .send()
-        .await
-        .map_err(|error| format!("Failed to validate web cookie against Bangumi: {error}"))?;
+    let response = fetch_with_cookie_redirect(&client, "https://bgm.tv/", cookie).await?;
 
     let status = response.status();
     let body = response
@@ -661,15 +727,11 @@ async fn bangumi_refresh_web_cookie() -> Result<WebCookieStatus, String> {
 
     let client = reqwest::Client::builder()
         .user_agent(bangumi::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| format!("Failed to build cookie refresh HTTP client: {error}"))?;
 
-    let response = client
-        .get("https://bangumi.tv/")
-        .header(reqwest::header::COOKIE, existing)
-        .send()
-        .await
-        .map_err(|error| format!("Failed to refresh web cookie from Bangumi: {error}"))?;
+    let response = fetch_with_cookie_redirect(&client, "https://bgm.tv/", &existing).await?;
 
     let headers = response.headers().clone();
     let status = response.status();
@@ -1141,7 +1203,8 @@ pub fn run() {
             bangumi_validate_web_cookie,
             bangumi_refresh_web_cookie,
             bangumi_open_embedded_web_login,
-            bangumi_capture_embedded_web_cookie
+            bangumi_capture_embedded_web_cookie,
+            diagnostics::export_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

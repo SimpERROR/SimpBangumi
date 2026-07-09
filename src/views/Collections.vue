@@ -187,6 +187,68 @@ const preDetailLoading = ref(false);
 const detailTab = ref<"info" | "review">("info");
 const detailPage = ref<"subject" | "person" | "character">("subject");
 const monoDetailTab = ref<"info" | "review">("info");
+
+// ── Detail tab indicator sliding animation ──
+const detailTabsRef = ref<HTMLElement | null>(null);
+const detailTabInfoRef = ref<HTMLElement | null>(null);
+const detailTabReviewRef = ref<HTMLElement | null>(null);
+const detailTabMyRef = ref<HTMLElement | null>(null);
+
+const monoDetailTabsRef = ref<HTMLElement | null>(null);
+const monoDetailTabInfoRef = ref<HTMLElement | null>(null);
+const monoDetailTabReviewRef = ref<HTMLElement | null>(null);
+
+const detailTabIndicatorStyle = ref<{ left: string; width: string }>({ left: "0px", width: "0px" });
+const monoDetailTabIndicatorStyle = ref<{ left: string; width: string }>({ left: "0px", width: "0px" });
+
+const detailTabRefMap: Record<string, typeof detailTabInfoRef> = {
+  info: detailTabInfoRef,
+  review: detailTabReviewRef,
+  my: detailTabMyRef,
+};
+
+const monoDetailTabRefMap: Record<string, typeof monoDetailTabInfoRef> = {
+  info: monoDetailTabInfoRef,
+  review: monoDetailTabReviewRef,
+};
+
+function updateDetailTabIndicator() {
+  const activeRef = detailTabRefMap[detailTab.value];
+  const tabEl = activeRef?.value;
+  const container = detailTabsRef.value;
+  if (!tabEl || !container) return;
+  const containerRect = container.getBoundingClientRect();
+  const tabRect = tabEl.getBoundingClientRect();
+  detailTabIndicatorStyle.value = {
+    left: `${tabRect.left - containerRect.left}px`,
+    width: `${tabRect.width}px`,
+  };
+}
+
+function updateMonoDetailTabIndicator() {
+  const activeRef = monoDetailTabRefMap[monoDetailTab.value];
+  const tabEl = activeRef?.value;
+  const container = monoDetailTabsRef.value;
+  if (!tabEl || !container) return;
+  const containerRect = container.getBoundingClientRect();
+  const tabRect = tabEl.getBoundingClientRect();
+  monoDetailTabIndicatorStyle.value = {
+    left: `${tabRect.left - containerRect.left}px`,
+    width: `${tabRect.width}px`,
+  };
+}
+
+watch(detailTab, () => { nextTick(updateDetailTabIndicator); });
+watch(monoDetailTab, () => { nextTick(updateMonoDetailTabIndicator); });
+watch(detailPage, () => { nextTick(updateMonoDetailTabIndicator); });
+watch(detailLoading, (loading) => {
+  if (!loading && detail.value) {
+    nextTick(() => {
+      updateDetailTabIndicator();
+      updateMonoDetailTabIndicator();
+    });
+  }
+});
 const imagePreviewUrl = ref("");
 const imagePreviewTitle = ref("");
 const detailContentRef = ref<HTMLElement | null>(null);
@@ -216,6 +278,18 @@ const personDetail = ref<PersonDetail | null>(null);
 const characterDetailLoading = ref(false);
 const characterDetailError = ref("");
 const characterDetail = ref<CharacterDetail | null>(null);
+
+watch(personDetailLoading, (loading) => {
+  if (!loading && personDetail.value) {
+    nextTick(updateMonoDetailTabIndicator);
+  }
+});
+watch(characterDetailLoading, (loading) => {
+  if (!loading && characterDetail.value) {
+    nextTick(updateMonoDetailTabIndicator);
+  }
+});
+
 const monoCommentLoading = ref(false);
 const monoCommentError = ref("");
 const monoCommentPage = ref(1);
@@ -2489,8 +2563,9 @@ defineExpose({
         </div>
       </div>
 
-      <section v-if="detailPage === 'subject'" class="detail-tabs" role="tablist" aria-label="详情分类">
+      <section v-if="detailPage === 'subject'" ref="detailTabsRef" class="detail-tabs" role="tablist" aria-label="详情分类">
         <button
+          ref="detailTabInfoRef"
           class="detail-tabs__tab"
           :class="{ 'is-active': detailTab === 'info' }"
           type="button"
@@ -2502,6 +2577,7 @@ defineExpose({
           信息
         </button>
         <button
+          ref="detailTabReviewRef"
           class="detail-tabs__tab"
           :class="{ 'is-active': detailTab === 'review' }"
           type="button"
@@ -2513,6 +2589,7 @@ defineExpose({
           评价
         </button>
         <button
+          ref="detailTabMyRef"
           class="detail-tabs__tab"
           :class="{ 'is-active': detailTab === 'my' }"
           type="button"
@@ -2523,6 +2600,7 @@ defineExpose({
         >
           我的
         </button>
+        <div class="detail-tabs__indicator" :style="detailTabIndicatorStyle" />
       </section>
 
       <template v-if="detailPage === 'subject' && detailTab === 'info'">
@@ -3011,8 +3089,9 @@ defineExpose({
               </div>
             </article>
 
-            <section class="detail-tabs" role="tablist" aria-label="人物详情分类">
+            <section ref="monoDetailTabsRef" class="detail-tabs" role="tablist" aria-label="人物详情分类">
               <button
+                ref="monoDetailTabInfoRef"
                 class="detail-tabs__tab"
                 :class="{ 'is-active': monoDetailTab === 'info' }"
                 type="button"
@@ -3023,6 +3102,7 @@ defineExpose({
                 信息
               </button>
               <button
+                ref="monoDetailTabReviewRef"
                 class="detail-tabs__tab"
                 :class="{ 'is-active': monoDetailTab === 'review' }"
                 type="button"
@@ -3032,6 +3112,7 @@ defineExpose({
               >
                 评论
               </button>
+              <div class="detail-tabs__indicator" :style="monoDetailTabIndicatorStyle" />
             </section>
 
             <template v-if="monoDetailTab === 'info'">
@@ -3158,8 +3239,9 @@ defineExpose({
               </div>
             </article>
 
-            <section class="detail-tabs" role="tablist" aria-label="角色详情分类">
+            <section ref="monoDetailTabsRef" class="detail-tabs" role="tablist" aria-label="角色详情分类">
               <button
+                ref="monoDetailTabInfoRef"
                 class="detail-tabs__tab"
                 :class="{ 'is-active': monoDetailTab === 'info' }"
                 type="button"
@@ -3170,6 +3252,7 @@ defineExpose({
                 信息
               </button>
               <button
+                ref="monoDetailTabReviewRef"
                 class="detail-tabs__tab"
                 :class="{ 'is-active': monoDetailTab === 'review' }"
                 type="button"
@@ -3179,6 +3262,7 @@ defineExpose({
               >
                 评论
               </button>
+              <div class="detail-tabs__indicator" :style="monoDetailTabIndicatorStyle" />
             </section>
 
             <template v-if="monoDetailTab === 'info'">

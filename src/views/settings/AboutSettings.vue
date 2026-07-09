@@ -103,10 +103,10 @@ const MAL_SITE = "https://myanimelist.net";
         问题反馈 ↗
       </a>
       <a :href="BANGUMI_SITE" target="_blank" rel="noopener noreferrer" class="about-link">
-        Bangumi 番组计划 官网 ↗
+        Bangumi 番组计划 ↗
       </a>
       <a :href="MAL_SITE" target="_blank" rel="noopener noreferrer" class="about-link">
-        MyAnimeList 官网 ↗
+        MyAnimeList ↗
       </a>
     </div>
 

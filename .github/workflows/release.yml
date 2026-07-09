@@ -67,5 +67,6 @@ jobs:
             ## **SimpBangumi** by SimpERROR_
 
             非官方客户端。
+            SimpBangumi 不内置、不提供、亦不分发任何 Live2D 角色模型及 Live2D Cubism SDK 核心运行时。
           releaseDraft: true
           prerelease: false

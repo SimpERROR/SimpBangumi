@@ -11,6 +11,7 @@ const VUE_SITE = "https://vuejs.org";
 const TENRAI_SITE = "https://api.tenrai.org";
 const FONTAWESOME_SITE = "https://fontawesome.com";
 const LIVE2D_SITE = "https://www.live2d.com";
+const MAL_SITE = "https://myanimelist.net";
 </script>
 
 <template>
@@ -102,13 +103,17 @@ const LIVE2D_SITE = "https://www.live2d.com";
         问题反馈 ↗
       </a>
       <a :href="BANGUMI_SITE" target="_blank" rel="noopener noreferrer" class="about-link">
-        Bangumi 官网 ↗
+        Bangumi 番组计划 官网 ↗
+      </a>
+      <a :href="MAL_SITE" target="_blank" rel="noopener noreferrer" class="about-link">
+        MyAnimeList 官网 ↗
       </a>
     </div>
 
+    <h2 style="margin-top: 8px;">烦请注意</h2>
     <p class="about-disclaimer">
       SimpBangumi 不内置、不提供、亦不分发任何 Live2D 角色模型及 Live2D Cubism SDK 核心运行时。
-      所有相关资产均需由用户自行合法获取并手动导入。<br>
+      所有相关资产均需由您自行合法获取并手动导入。<br>
       SimpBangumi 不是 Bangumi 番组计划 官方桌面客户端。
     </p>
 
@@ -170,12 +175,8 @@ const LIVE2D_SITE = "https://www.live2d.com";
 
 .about-disclaimer {
   margin: 0;
-  padding: 10px 12px;
   font-size: 12px;
   line-height: 1.7;
-  color: var(--muted);
-  background: var(--surface);
-  border-radius: 8px;
-  border-left: 3px solid var(--border);
+  color: var(--text);
 }
 </style>

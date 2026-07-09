@@ -24,9 +24,9 @@ watch(broadcastDisabled, (val) => {
 
 <template>
   <div class="onboarding__panel settings-page">
-    <h3 class="settings-page__section-title">配信跟踪</h3>
+    <h3 class="settings-page__section-title">配信跟踪（Beta）</h3>
     <p class="onboarding__description">
-      配置番剧配信信息的获取方式。自动匹配始终使用 Tenrai API。
+      配置番剧配信信息的获取方式。
     </p>
 
     <div class="settings-entry-list">
@@ -44,7 +44,7 @@ watch(broadcastDisabled, (val) => {
       <div class="item settings-entry">
         <div class="settings-entry__content">
           <h3>自动匹配数据源</h3>
-          <p>Tenrai API（不可更改）</p>
+          <p>自动匹配在获取依赖信息时使用的数据源。</p>
         </div>
         <span class="settings-entry__fixed">Tenrai API</span>
       </div>
@@ -60,9 +60,15 @@ watch(broadcastDisabled, (val) => {
         </select>
       </div>
     </div>
-
-    <p class="onboarding__description settings-page__footer-note">
-      MAL 官网爬取速度较慢但数据更及时，且不受第三方 API 状态影响。
-    </p>
+    <div class="settings-page__footer-note">
+      <div class="footer-note__header">
+        <svg class="footer-note__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path d="M424.5 355.1C449 329.2 464 294.4 464 256C464 176.5 399.5 112 320 112C240.5 112 176 176.5 176 256C176 294.4 191 329.2 215.5 355.1C236.8 377.5 260.4 409.1 268.8 448L371.2 448C379.6 409 403.2 377.5 424.5 355.1zM459.3 388.1C435.7 413 416 443.4 416 477.7L416 496C416 540.2 380.2 576 336 576L304 576C259.8 576 224 540.2 224 496L224 477.7C224 443.4 204.3 413 180.7 388.1C148 353.7 128 307.2 128 256C128 150 214 64 320 64C426 64 512 150 512 256C512 307.2 492 353.7 459.3 388.1zM272 248C272 261.3 261.3 272 248 272C234.7 272 224 261.3 224 248C224 199.4 263.4 160 312 160C325.3 160 336 170.7 336 184C336 197.3 325.3 208 312 208C289.9 208 272 225.9 272 248z" fill="currentColor"/></svg>
+        <b>数据源选择提示</b>
+      </div>
+      <ul class="footer-note__list">
+        <li>Tenrai 获取速度更快，但可能存在延迟或不及时更新的情况。</li>
+        <li>MAL 官网爬取速度较慢但数据更及时，且不受第三方 API 状态影响。</li>
+      </ul>
+    </div>
   </div>
 </template>

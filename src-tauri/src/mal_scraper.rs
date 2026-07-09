@@ -163,15 +163,34 @@ fn extract_sidebar_value(html: &str, label: &str) -> Option<String> {
     let pos = html.find(&search)?;
     let after_label = &html[pos + search.len()..];
 
-    // Extract text until the next structural tag: <span, <br, </div, <div
-    let value_end = after_label
-        .find("<span")
-        .or_else(|| after_label.find("<br"))
-        .or_else(|| after_label.find("</div"))
-        .or_else(|| after_label.find("<div"))
+    // Find the earliest structural tag boundary after the label.
+    // Ordered by likelihood on MAL sidebar pages; we take the minimum position.
+    let stop_markers: &[&str] = &[
+        "<span class=\"dark_text\"", // next sidebar field (most reliable)
+        "</div>",
+        "</span>",
+        "<br",
+        "<a ",
+        "<a>",
+        "<small",
+        "<h2",
+        "<h3",
+        "<span",
+        "<div",
+    ];
+    let value_end = stop_markers
+        .iter()
+        .filter_map(|m| after_label.find(m))
+        .min()
         .unwrap_or(after_label.len());
 
     let raw = &after_label[..value_end];
+    // Debug: log raw fragment for troubleshooting extraction issues
+    crate::log_info(&format!(
+        "mal_scrape: label=\"{}\" raw_fragment=\"{}\"",
+        label,
+        raw.chars().take(300).collect::<String>().replace('\n', "\\n")
+    ));
     let cleaned = strip_html_tags(raw).trim().to_string();
 
     // Limit to reasonable length (status/duration values should be short)

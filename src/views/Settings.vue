@@ -25,7 +25,7 @@ const pageTitle = computed(() => {
   }
 
   if (activePage.value === "broadcast") {
-    return "配信跟踪";
+    return "配信跟踪（Beta）";
   }
 
   if (activePage.value === "developer") {

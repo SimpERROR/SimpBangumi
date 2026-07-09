@@ -48,6 +48,12 @@ jobs:
           NEW_VER="${{ steps.version_env.outputs.version }}"
           jq --arg ver "$NEW_VER" '.version = $ver' package.json > tmp.json && mv tmp.json package.json
 
+      - name: Overwrite version in package-lock.json
+        shell: bash
+        run: |
+          NEW_VER="${{ steps.version_env.outputs.version }}"
+          jq --arg ver "$NEW_VER" '.version = $ver | .packages."".version = $ver' package-lock.json > tmp.json && mv tmp.json package-lock.json
+
       - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:

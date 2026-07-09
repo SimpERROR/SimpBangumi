@@ -8,6 +8,7 @@ import BbcodeSummary from "../components/BbcodeSummary.vue";
 import BroadcastProgress from "../components/BroadcastProgress.vue";
 import ScoreDebugPanel from "../components/ScoreDebugPanel.vue";
 import { formatReadableDateTime } from "../utils/datetime";
+import { autoLinkPlainText } from "../utils/autoLink";
 import { matchAnimeToTenrai, getCachedMatch, searchTenraiForMatch, fetchMalAnimeFull, setManualMatch, isSuppressed, suppressBgmId, unsuppressBgmId, shouldConfirmMatch, confirmBgmId, type AnimeMatchInfo } from "../utils/animeMatch";
 import { TenraiApi } from "../api/Tenrai";
 import { isTimeMismatch } from "../utils/timeCheck";
@@ -2294,7 +2295,7 @@ defineExpose({
             <span class="Tenrai-view-match__value">{{ new Date(TenraiMatch.cachedAt).toLocaleString('zh-CN') }}</span>
           </div>
           <div class="Tenrai-view-match__row">
-            <span class="Tenrai-view-match__label">详细数据更新时间</span>
+            <span class="Tenrai-view-match__label">详细数据更新</span>
             <span class="Tenrai-view-match__value">{{ TenraiMatch.detailFetchedAt ? new Date(TenraiMatch.detailFetchedAt).toLocaleString('zh-CN') : '-' }}</span>
           </div>
           <div class="Tenrai-view-match__row">
@@ -2794,7 +2795,7 @@ defineExpose({
                   <span v-if="formattedCollectionUpdatedAt"> · {{ formattedCollectionUpdatedAt }}</span>
                   <span v-if="userShortComment"> · 这是你为此条目撰写的简评，将出现在吐槽箱中。你可以在「我的」中修改。</span>
                 </p>
-                <p class="comment-item__content">{{ userShortComment || "你还没有写简评。" }}</p>
+                <p class="comment-item__content" v-html="autoLinkPlainText(userShortComment || '你还没有写简评。')"></p>
               </div>
             </article>
           </article>
@@ -2843,7 +2844,7 @@ defineExpose({
                     <span v-if="item.interestText"> · {{ item.interestText }}</span>
                     <span v-if="item.timeText"> · {{ formatReadableDateTime(item.timeText, { fallback: "" }) }}</span>
                   </p>
-                  <p class="comment-item__content">{{ item.contentText }}</p>
+                  <p class="comment-item__content" v-html="autoLinkPlainText(item.contentText)"></p>
                 </div>
               </article>
             </div>
@@ -3108,7 +3109,7 @@ defineExpose({
                         <span v-if="item.interestText"> · {{ item.interestText }}</span>
                         <span v-if="item.timeText"> · {{ formatReadableDateTime(item.timeText, { fallback: "" }) }}</span>
                       </p>
-                      <p class="comment-item__content">{{ item.contentText }}</p>
+                      <p class="comment-item__content" v-html="autoLinkPlainText(item.contentText)"></p>
                     </div>
                   </article>
                 </div>
@@ -3254,7 +3255,7 @@ defineExpose({
                         <span v-if="item.interestText"> · {{ item.interestText }}</span>
                         <span v-if="item.timeText"> · {{ formatReadableDateTime(item.timeText, { fallback: "" }) }}</span>
                       </p>
-                      <p class="comment-item__content">{{ item.contentText }}</p>
+                      <p class="comment-item__content" v-html="autoLinkPlainText(item.contentText)"></p>
                     </div>
                   </article>
                 </div>

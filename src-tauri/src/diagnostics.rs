@@ -33,7 +33,7 @@ struct EnvironmentInfo {
 #[derive(Serialize)]
 struct NetworkInfo {
     bangumi_api: ConnectivityResult,
-    Tenrai_api: ConnectivityResult,
+    tenrai_api: ConnectivityResult,
 }
 
 #[derive(Serialize)]
@@ -474,11 +474,11 @@ pub async fn export_diagnostics(
 
     // 2. Test API connectivity
     let bangumi_result = test_connectivity("https://api.bgm.tv/").await;
-    let Tenrai_result = test_connectivity("https://api.tenrai.org/v1").await;
+    let tenrai_result = test_connectivity("https://api.tenrai.org/v1").await;
 
     let network = NetworkInfo {
         bangumi_api: bangumi_result,
-        Tenrai_api: Tenrai_result,
+        tenrai_api: tenrai_result,
     };
 
     // 3. Resolve sensitive user identifiers for redaction

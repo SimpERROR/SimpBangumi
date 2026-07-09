@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../stores/app";
 import type { Live2dModelInfo } from "../../stores/app";
+import { linkConfirmEnabled } from "../../composables/useLinkInterceptor";
 
 const appStore = useAppStore();
 
@@ -117,6 +118,17 @@ function handleRefreshDialog() {
       <button class="filter-tab" :class="{ 'is-active': appStore.titlePreference.value === 'translated' }" type="button" @click="appStore.titlePreference.value = 'translated'">译名优先</button>
       <button class="filter-tab" :class="{ 'is-active': appStore.titlePreference.value === 'original' }" type="button" @click="appStore.titlePreference.value = 'original'">原文优先</button>
     </div>
+
+    <h2 style="margin-top: 24px;">链接行为</h2>
+
+    <label class="settings-toggle">
+      <span class="settings-toggle__label">打开外部链接前确认</span>
+      <input v-model="linkConfirmEnabled" class="settings-toggle__input" type="checkbox" role="switch" />
+      <span class="settings-toggle__track" />
+    </label>
+    <p class="settings-field__hint">
+      关闭后点击链接将直接在浏览器中打开，不再弹出确认提示。针对特定域名可在弹窗中勾选「不再提示」。
+    </p>
 
     <h2 style="margin-top: 24px;">Live2D 看板娘</h2>
     <p class="onboarding__description">在界面右下角显示一个 Live2D 吉祥物。</p>

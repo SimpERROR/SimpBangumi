@@ -51,5 +51,10 @@ export function renderBbcodeText(input?: string): string {
     return `<a href="${safeHref}" target="_blank" rel="noreferrer">${href}</a>`;
   });
 
+  // Auto-link plain text URLs not already inside <a> tags
+  html = autoLinkInHtml(html);
+
   return html.replace(/\r?\n/g, "<br>");
 }
+
+import { autoLinkInHtml } from "./autoLink";

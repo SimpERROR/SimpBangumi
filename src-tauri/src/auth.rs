@@ -828,7 +828,7 @@ fn wait_for_callback_and_capture_code(config: OAuthClientConfig) -> Result<Strin
                 write_callback_response(
                     &mut stream,
                     true,
-                    "授权完成，正在返回应用。此页面可直接关闭。",
+                    "Bangumi 授权完成，此页面可直接关闭。登录流程尚未完成。",
                     state_theme,
                 );
                 log_info("OAuth callback handled successfully");
@@ -1013,7 +1013,7 @@ fn build_callback_html(message: &str, success: bool, theme: Option<&str>) -> Str
                 <h1>{status_text}</h1>
             </div>
             <p>{escaped_message}</p>
-            <p class="tip">如果应用未自动继续，请切回 SimpBangumi 查看登录状态。</p>
+            <p class="tip">登录流程尚未完成，请切回 SimpBangumi 查看登录状态。</p>
         </main>
     </body>
 </html>"#,

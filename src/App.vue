@@ -22,7 +22,9 @@ import { usePagination } from "./composables/usePagination";
 import { invoke } from "@tauri-apps/api/core";
 import type { Live2dModelInfo } from "./stores/app";
 import Live2dCompanion from "./components/Live2dCompanion.vue";
+import LinkConfirmModal from "./components/LinkConfirmModal.vue";
 import { checkTimeDrift, setTimeMismatch } from "./utils/timeCheck";
+import { useLinkInterceptor } from "./composables/useLinkInterceptor";
 
 type OnboardingReason = "first-launch" | "session-expired";
 
@@ -54,6 +56,12 @@ const pagination = usePagination({
   initialOffset: appStore.offset.value,
 });
 const home = useHome({ pagination });
+useLinkInterceptor();
+
+function preventContextMenu(e: MouseEvent) {
+  e.preventDefault();
+}
+
 const completeViewRef = ref<{
   refresh: () => Promise<void>;
 } | null>(null);
@@ -508,6 +516,7 @@ watch(
 onMounted(() => {
   restorePersistedPreferences();
   setupPreferencePersistence();
+  document.addEventListener("contextmenu", preventContextMenu);
 
   // 加载已导入的 Live2D 模型列表
   void (async () => {
@@ -548,6 +557,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  document.removeEventListener("contextmenu", preventContextMenu);
   window.removeEventListener("resize", updateTabIndicator);
   if (cookieAutoRefreshTimer.value !== null) {
     window.clearInterval(cookieAutoRefreshTimer.value);
@@ -753,5 +763,7 @@ watch(
       :model-url="appStore.live2dModels.value.find(m => m.name === appStore.live2dActiveModel.value)?.path ?? undefined"
       @model-error="appStore.showToast($event, 'error')"
     />
+
+    <LinkConfirmModal />
   </div>
 </template>

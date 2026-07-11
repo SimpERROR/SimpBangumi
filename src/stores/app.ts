@@ -44,6 +44,9 @@ const nsfwExitTriggerCounter = ref(0);
 // 收藏状态保存成功 → 看板娘说话+表情
 const collectionSaveSuccessCounter = ref(0);
 
+// 更新选项
+const checkUpdateOnStartup = ref(true);
+
 export interface Live2dModelInfo {
   name: string;
   path: string;
@@ -116,5 +119,6 @@ export function useAppStore() {
     live2dAutoSpeakEnabled,
     live2dAutoSpeakMinInterval,
     live2dAutoSpeakMaxInterval,
+    checkUpdateOnStartup,
   };
 }

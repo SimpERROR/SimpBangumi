@@ -2052,7 +2052,7 @@ async function saveCollectionStatus() {
     type: form.type,
     rate: form.rate,
     vol_status: subjectSupportsVolumeProgress.value ? form.vol_status : undefined,
-    ep_status: subjectSupportsVolumeProgress.value ? form.ep_status : undefined,
+    ep_status: subjectSupportsEpisodeProgress.value ? form.ep_status : undefined,
     private: form.private,
     comment: form.comment.trim() || undefined,
     tags: parseTagsInput(form.tagsInput),
@@ -2942,114 +2942,217 @@ defineExpose({
       </template>
 
       <template v-if="detailPage === 'subject' && detailTab === 'my'">
-        <article id="detail-panel-review" class="detail-section" role="tabpanel">
-          <h4>用户的收藏与完成状态</h4>
-          <p v-if="!userCanEditCollection">请先登录后查看和修改你的收藏状态。</p>
+        <article id="detail-panel-review" class="detail-section detail-section--my" role="tabpanel">
+          <header class="my-panel__header">
+            <div class="my-panel__title-row">
+              <h4>我的收藏</h4>
+              <span v-if="formattedCollectionUpdatedAt" class="my-panel__update-badge" title="最近更新">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                {{ formattedCollectionUpdatedAt }}
+              </span>
+            </div>
+          </header>
+
+          <p v-if="!userCanEditCollection" class="my-panel__login-hint">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            请先登录后查看和修改你的收藏状态。
+          </p>
+
           <template v-else>
-            <p v-if="collectionLoading">正在读取你的收藏状态...</p>
-            <p v-else-if="formattedCollectionUpdatedAt" class="detail-muted">最近更新：{{ formattedCollectionUpdatedAt }}</p>
-            <p v-else class="detail-muted">该条目尚未收藏，保存后会自动创建收藏记录。</p>
+            <div v-if="collectionLoading" class="my-panel__loading">
+              <span class="my-panel__spinner"></span>
+              正在读取你的收藏状态...
+            </div>
 
-            <div class="detail-form">
-              <label>
-                收藏状态
-                <select v-model.number="form.type" :disabled="collectionSaving || collectionLoading">
-                  <option :value="1">想看</option>
-                  <option :value="2">看过</option>
-                  <option :value="3">在看</option>
-                  <option :value="4">搁置</option>
-                  <option :value="5">抛弃</option>
-                </select>
-              </label>
-
-              <label>
-                评分 (0-10)
-                <input v-model.number="form.rate" type="number" min="0" max="10" :disabled="collectionSaving || collectionLoading" />
-              </label>
-
-              <label>
-                剧集完成度 (ep_status)
-                <input v-model.number="form.ep_status" type="number" min="0" :disabled="collectionSaving || collectionLoading" />
-              </label>
-
-              <label v-if="subjectSupportsVolumeProgress">
-                册数完成度 (vol_status)
-                <input v-model.number="form.vol_status" type="number" min="0" :disabled="collectionSaving || collectionLoading" />
-              </label>
-
-              <label>
-                标签（英文逗号分隔）
-                <input v-model="form.tagsInput" type="text" :disabled="collectionSaving || collectionLoading" placeholder="例如：补番, 童年" />
-              </label>
-
-              <label>
-                简评
-                <textarea v-model="form.comment" rows="3" :disabled="collectionSaving || collectionLoading"></textarea>
-              </label>
-
-              <label class="detail-form__switch">
-                <input v-model="form.private" type="checkbox" :disabled="collectionSaving || collectionLoading" />
-                仅自己可见
-              </label>
-
-              <div class="detail-form__actions">
-                <button class="primary-button" type="button" :disabled="collectionSaving || collectionLoading" @click="saveCollectionStatus">
-                  {{ collectionSaving ? "保存中..." : "保存收藏状态" }}
-                </button>
-                <span v-if="collectionSavedMessage" class="detail-success">{{ collectionSavedMessage }}</span>
-              </div>
-              <p v-if="collectionError" class="onboarding__error">{{ collectionError }}</p>
-
-              <div v-if="canManageEpisodes" class="episode-manager">
-                <h5>逐集完成管理</h5>
-                <p class="detail-muted">点击章节方格固定弹层。</p>
-                <p v-if="episodeLoading && episodes.length === 0" class="detail-muted">正在加载章节列表...</p>
-                <p v-if="episodeError" class="onboarding__error">{{ episodeError }}</p>
-
-                <div v-if="episodes.length > 0" class="episode-groups">
-                  <section v-for="group in groupedEpisodes" :key="group.type" class="episode-group">
-                    <h6>{{ group.label }} · {{ group.items.length }}</h6>
-                    <div class="episode-grid">
-                      <article
-                        v-for="episode in group.items"
-                        :key="episode.id"
-                        class="episode-cell"
-                        :class="[
-                          episodeTypeClass(episode.type),
-                          episodeStatusClass(episodeStatusType(episode.id)),
-                          episodePopoverPlacementClass(episode.id),
-                          { 'is-saving': episodeSavingId === episode.id },
-                        ]"
-                        tabindex="0"
-                        @mouseenter="onEpisodeHover(episode.id, $event)"
-                        @focusin="onEpisodeHover(episode.id, $event)"
-                      >
-                        <span class="episode-cell__type">{{ episodeTypeShort(episode.type) }}</span>
-                        <strong class="episode-cell__index">{{ episodeDisplayIndex(episode) }}</strong>
-
-                        <section class="episode-popover">
-                          <p class="episode-popover__title">{{ preferredSubjectTitle(episode.name, episode.name_cn, "未命名章节") }}</p>
-                          <p class="episode-popover__meta">{{ notpreferredSubjectTitle(episode.name, episode.name_cn, "未命名章节") }}</p>
-                          <p class="episode-popover__meta">类型：{{ episodeTypeLabel(episode.type) }}</p>
-                          <p class="episode-popover__meta" v-if="episode.type === 0">集数：EP {{ episode.ep ?? episode.sort }}</p>
-                          <p class="episode-popover__meta" v-else>序号：{{ episode.sort }}（非本篇，ep 无意义）</p>
-
-                          <label class="episode-popover__control">
-                            收藏状态
-                            <select
-                              :value="episodeStatusType(episode.id)"
-                              :disabled="episodeSavingId === episode.id"
-                              @change="updateEpisodeStatus(episode.id, Number(($event.target as HTMLSelectElement).value))"
-                            >
-                              <option :value="0">未看</option>
-                              <option :value="2">看过</option>
-                            </select>
-                          </label>
-                        </section>
-                      </article>
-                    </div>
-                  </section>
+            <div class="detail-form my-collection-form">
+              <!-- 状态 & 评分 卡片 -->
+              <div class="my-form-card">
+                <div class="my-form-card__header">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2z"/></svg>
+                  <span>状态与评分</span>
                 </div>
+                <div class="my-form-card__body">
+                  <div class="my-form-row my-form-row--split">
+                    <label class="my-form-field">
+                      <span class="my-form-field__label">收藏状态</span>
+                      <div class="my-select-wrapper">
+                        <select
+                          v-model.number="form.type"
+                          :disabled="collectionSaving || collectionLoading"
+                          class="my-form-field__select"
+                        >
+                          <option :value="1">想看</option>
+                          <option :value="2">看过</option>
+                          <option :value="3">在看</option>
+                          <option :value="4">搁置</option>
+                          <option :value="5">抛弃</option>
+                        </select>
+                      </div>
+                    </label>
+
+                    <label class="my-form-field">
+                      <span class="my-form-field__label">我的评分</span>
+                      <div class="my-rating-input">
+                        <input
+                          v-model.number="form.rate"
+                          type="range"
+                          min="0"
+                          max="10"
+                          step="1"
+                          :disabled="collectionSaving || collectionLoading"
+                          class="my-rating-slider"
+                        />
+                        <span class="my-rating-value" :class="{ 'is-rated': form.rate > 0 }">
+                          {{ form.rate > 0 ? form.rate : '—' }}
+                        </span>
+                      </div>
+                    </label>
+                  </div>
+
+                  <!-- 进度只读展示 -->
+                  <div v-if="subjectSupportsEpisodeProgress || subjectSupportsVolumeProgress" class="my-progress-row">
+                    <div v-if="subjectSupportsEpisodeProgress" class="my-progress-chip" title="剧集完成度由逐集管理自动计算">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                      <span>剧集进度</span>
+                      <strong>{{ form.ep_status }} / {{ detail?.eps || '?' }}</strong>
+                    </div>
+                    <div v-if="subjectSupportsVolumeProgress" class="my-progress-chip">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                      <span>册数进度</span>
+                      <strong>{{ form.vol_status }} / {{ detail?.volumes || '?' }}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 标签 & 隐私 卡片 -->
+              <div class="my-form-card">
+                <div class="my-form-card__header">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                  <span>标签与隐私</span>
+                </div>
+                <div class="my-form-card__body">
+                  <label class="my-form-field">
+                    <span class="my-form-field__label">标签</span>
+                    <input
+                      v-model="form.tagsInput"
+                      type="text"
+                      :disabled="collectionSaving || collectionLoading"
+                      placeholder="用英文逗号分隔，如：补番, 童年"
+                      class="my-form-field__input"
+                    />
+                  </label>
+
+                  <label class="my-form-field my-form-field--inline">
+                    <span class="my-form-field__label">隐私设置</span>
+                    <label class="my-toggle">
+                      <input v-model="form.private" type="checkbox" :disabled="collectionSaving || collectionLoading" />
+                      <span class="my-toggle__track">
+                        <span class="my-toggle__thumb"></span>
+                      </span>
+                      <span class="my-toggle__label">仅自己可见</span>
+                    </label>
+                  </label>
+                </div>
+              </div>
+
+              <!-- 简评 卡片 -->
+              <div class="my-form-card">
+                <div class="my-form-card__header">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <span>简评</span>
+                  <span class="my-form-card__hint">（将出现在吐槽箱中）</span>
+                </div>
+                <div class="my-form-card__body">
+                  <textarea
+                    v-model="form.comment"
+                    rows="3"
+                    :disabled="collectionSaving || collectionLoading"
+                    placeholder="写下你对这部作品的感想..."
+                    class="my-form-field__textarea"
+                  ></textarea>
+                </div>
+              </div>
+
+              <!-- 操作区 -->
+              <div class="my-form-actions">
+                <button
+                  class="my-save-button"
+                  type="button"
+                  :disabled="collectionSaving || collectionLoading"
+                  @click="saveCollectionStatus"
+                >
+                  <svg v-if="!collectionSaving" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                  <span v-if="collectionSaving" class="my-panel__spinner my-panel__spinner--small"></span>
+                  {{ collectionSaving ? "保存中..." : "保存收藏" }}
+                </button>
+                <transition name="my-fade-up">
+                  <span v-if="collectionSavedMessage" class="my-save-success">{{ collectionSavedMessage }}</span>
+                </transition>
+              </div>
+              <transition name="my-fade-up">
+                <p v-if="collectionError" class="my-form-error">{{ collectionError }}</p>
+              </transition>
+            </div>
+
+            <!-- 逐集管理 -->
+            <div v-if="canManageEpisodes" class="episode-manager">
+              <div class="episode-manager__header">
+                <h5>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                  逐集完成管理
+                </h5>
+                <span class="episode-manager__hint">点击方格切换完成状态，自动同步剧集进度</span>
+              </div>
+              <p v-if="episodeLoading && episodes.length === 0" class="detail-muted">正在加载章节列表...</p>
+              <p v-if="episodeError" class="onboarding__error">{{ episodeError }}</p>
+
+              <div v-if="episodes.length > 0" class="episode-groups">
+                <section v-for="group in groupedEpisodes" :key="group.type" class="episode-group">
+                  <div class="episode-group__title">
+                    <span class="episode-group__label">{{ group.label }}</span>
+                    <span class="episode-group__count">{{ group.items.length }} 集</span>
+                  </div>
+                  <div class="episode-grid">
+                    <article
+                      v-for="episode in group.items"
+                      :key="episode.id"
+                      class="episode-cell"
+                      :class="[
+                        episodeTypeClass(episode.type),
+                        episodeStatusClass(episodeStatusType(episode.id)),
+                        episodePopoverPlacementClass(episode.id),
+                        { 'is-saving': episodeSavingId === episode.id },
+                      ]"
+                      tabindex="0"
+                      @mouseenter="onEpisodeHover(episode.id, $event)"
+                      @focusin="onEpisodeHover(episode.id, $event)"
+                    >
+                      <span class="episode-cell__type">{{ episodeTypeShort(episode.type) }}</span>
+                      <strong class="episode-cell__index">{{ episodeDisplayIndex(episode) }}</strong>
+
+                      <section class="episode-popover">
+                        <p class="episode-popover__title">{{ preferredSubjectTitle(episode.name, episode.name_cn, "未命名章节") }}</p>
+                        <p class="episode-popover__meta">{{ notpreferredSubjectTitle(episode.name, episode.name_cn, "未命名章节") }}</p>
+                        <p class="episode-popover__meta">类型：{{ episodeTypeLabel(episode.type) }}</p>
+                        <p class="episode-popover__meta" v-if="episode.type === 0">集数：EP {{ episode.ep ?? episode.sort }}</p>
+                        <p class="episode-popover__meta" v-else>序号：{{ episode.sort }}（非本篇，ep 无意义）</p>
+
+                        <label class="episode-popover__control">
+                          收藏状态
+                          <select
+                            :value="episodeStatusType(episode.id)"
+                            :disabled="episodeSavingId === episode.id"
+                            @change="updateEpisodeStatus(episode.id, Number(($event.target as HTMLSelectElement).value))"
+                          >
+                            <option :value="0">未看</option>
+                            <option :value="2">看过</option>
+                          </select>
+                        </label>
+                      </section>
+                    </article>
+                  </div>
+                </section>
               </div>
             </div>
           </template>

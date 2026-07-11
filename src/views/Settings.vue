@@ -6,8 +6,9 @@ import DeveloperSettings from "./settings/DeveloperSettings.vue";
 import AboutSettings from "./settings/AboutSettings.vue";
 import WebLoginSettings from "./settings/WebLoginSettings.vue";
 import BroadcastSettings from "./settings/BroadcastSettings.vue";
+import UpdateSettings from "./settings/UpdateSettings.vue";
 
-type SettingsPage = "home" | "display" | "web-login" | "broadcast" | "about" | "developer";
+type SettingsPage = "home" | "display" | "web-login" | "broadcast" | "update" | "about" | "developer";
 
 const activePage = ref<SettingsPage>("home");
 
@@ -28,6 +29,10 @@ const pageTitle = computed(() => {
     return "配信跟踪（Beta）";
   }
 
+  if (activePage.value === "update") {
+    return "更新选项";
+  }
+
   if (activePage.value === "developer") {
     return "开发者选项";
   }
@@ -35,7 +40,7 @@ const pageTitle = computed(() => {
   return "设置";
 });
 
-function openPage(page: "display" | "web-login" | "broadcast" | "about" | "developer") {
+function openPage(page: "display" | "web-login" | "broadcast" | "update" | "about" | "developer") {
   activePage.value = page;
 }
 
@@ -57,6 +62,7 @@ function goHome() {
     <DisplaySettings v-else-if="activePage === 'display'" />
     <WebLoginSettings v-else-if="activePage === 'web-login'" />
     <BroadcastSettings v-else-if="activePage === 'broadcast'" />
+    <UpdateSettings v-else-if="activePage === 'update'" />
     <DeveloperSettings v-else-if="activePage === 'developer'" />
     <AboutSettings v-else />
   </section>

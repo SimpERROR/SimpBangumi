@@ -1166,6 +1166,104 @@ fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(
     Ok(())
 }
 
+// ── GitHub 更新检查 ─────────────────────────────────────
+
+const GITHUB_REPO_OWNER: &str = "SimpERROR";
+const GITHUB_REPO_NAME: &str = "SimpBangumi";
+
+#[derive(serde::Serialize)]
+struct UpdateCheckResult {
+    has_update: bool,
+    current_version: String,
+    latest_version: String,
+    release_url: String,
+    release_notes: String,
+}
+
+/// 从 GitHub Releases API 获取最新版本号，与当前版本比较。
+/// 不依赖用户的 GitHub token，使用公共 API（有速率限制，但对启动检查足够）。
+#[tauri::command]
+async fn check_github_update() -> Result<UpdateCheckResult, String> {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let url = format!(
+        "https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/releases/latest"
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent(format!("{GITHUB_REPO_NAME}/update-check"))
+        .build()
+        .map_err(|error| format!("无法创建 HTTP 客户端: {error}"))?;
+
+    let response = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .map_err(|error| format!("无法连接到 GitHub: {error}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        // 404 表示没有 release，视为无更新
+        if status.as_u16() == 404 {
+            return Ok(UpdateCheckResult {
+                has_update: false,
+                current_version,
+                latest_version: String::new(),
+                release_url: String::new(),
+                release_notes: String::new(),
+            });
+        }
+
+        return Err(format!("GitHub API 返回 {status}"));
+    }
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|error| format!("无法解析 GitHub 响应: {error}"))?;
+
+    let latest_version = body["tag_name"]
+        .as_str()
+        .unwrap_or("")
+        .trim_start_matches('v')
+        .to_string();
+
+    let release_url = body["html_url"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    let release_notes = body["body"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    if latest_version.is_empty() {
+        return Ok(UpdateCheckResult {
+            has_update: false,
+            current_version,
+            latest_version: String::new(),
+            release_url,
+            release_notes,
+        });
+    }
+
+    let has_update = latest_version != current_version;
+
+    log_info(&format!(
+        "Update check: current={current_version}, latest={latest_version}, has_update={has_update}"
+    ));
+
+    Ok(UpdateCheckResult {
+        has_update,
+        current_version,
+        latest_version,
+        release_url,
+        release_notes,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1206,7 +1304,8 @@ pub fn run() {
             bangumi_open_embedded_web_login,
             bangumi_capture_embedded_web_cookie,
             diagnostics::export_diagnostics,
-            mal_scraper::mal_scrape_anime
+            mal_scraper::mal_scrape_anime,
+            check_github_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -40,6 +40,7 @@ const LIVE2D_AUTO_SPEAK_KEY = "bangumi.live2d.autoSpeak";
 const LIVE2D_AUTO_SPEAK_MIN_INTERVAL_KEY = "bangumi.live2d.autoSpeakMinInterval";
 const LIVE2D_AUTO_SPEAK_MAX_INTERVAL_KEY = "bangumi.live2d.autoSpeakMaxInterval";
 const NSFW_INTERACTION_ENABLED_KEY = "bangumi.live2d.nsfwInteractionEnabled";
+const CHECK_UPDATE_KEY = "bangumi.update.checkOnStartup";
 
 const THEME_OPTIONS: ThemeMode[] = ["light", "dark"];
 const SUBJECT_FILTER_OPTIONS: SubjectTypeFilter[] = ["all", 1, 2, 3, 4, 6];
@@ -383,6 +384,11 @@ function restorePersistedPreferences() {
   if (savedNsfwInteraction === "false") {
     appStore.nsfwInteractionEnabled.value = false;
   }
+
+  const savedCheckUpdate = localStorage.getItem(CHECK_UPDATE_KEY);
+  if (savedCheckUpdate === "false") {
+    appStore.checkUpdateOnStartup.value = false;
+  }
 }
 
 function setupPreferencePersistence() {
@@ -453,6 +459,13 @@ function setupPreferencePersistence() {
     () => appStore.nsfwInteractionEnabled.value,
     (value) => {
       localStorage.setItem(NSFW_INTERACTION_ENABLED_KEY, String(value));
+    },
+  );
+
+  watch(
+    () => appStore.checkUpdateOnStartup.value,
+    (value) => {
+      localStorage.setItem(CHECK_UPDATE_KEY, String(value));
     },
   );
 }
@@ -554,6 +567,26 @@ onMounted(() => {
       setTimeMismatch(false);
     }
   });
+
+  // GitHub 版本更新检查（仅在开关启用时）
+  if (appStore.checkUpdateOnStartup.value) {
+    void invoke<{ has_update: boolean; current_version: string; latest_version: string; release_url: string; release_notes: string }>("check_github_update")
+      .then((result) => {
+        if (result.has_update) {
+          console.log(`[update] New version available: ${result.latest_version} (current: ${result.current_version})`);
+          appStore.showToast(
+            `发现新版本 v${result.latest_version}（当前 v${result.current_version}）。请前往 GitHub 下载更新。`,
+            "info",
+            8000
+          );
+        } else {
+          console.log(`[update] Already up to date (${result.current_version})`);
+        }
+      })
+      .catch((err) => {
+        console.warn("[update] Update check failed:", err);
+      });
+  }
 });
 
 onUnmounted(() => {

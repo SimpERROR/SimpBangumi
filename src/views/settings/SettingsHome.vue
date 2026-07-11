@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const emit = defineEmits<{
-  (event: "open-page", page: "display" | "web-login" | "broadcast" | "about" | "developer"): void;
+  (event: "open-page", page: "display" | "web-login" | "broadcast" | "update" | "about" | "developer"): void;
 }>();
 
 function openDisplaySettings() {
@@ -9,6 +9,10 @@ function openDisplaySettings() {
 
 function openBroadcastSettings() {
   emit("open-page", "broadcast");
+}
+
+function openUpdateSettings() {
+  emit("open-page", "update");
 }
 
 function openAboutSettings() {
@@ -49,6 +53,14 @@ function openDeveloperSettings() {
         <div class="settings-entry__content">
           <h3>配信跟踪（Beta）</h3>
           <p>配置番剧配信数据源与匹配行为。</p>
+        </div>
+        <span class="settings-entry__chevron" aria-hidden="true">></span>
+      </button>
+
+      <button class="item item--button settings-entry" type="button" @click="openUpdateSettings">
+        <div class="settings-entry__content">
+          <h3>更新选项</h3>
+          <p>控制应用版本更新的检查行为。</p>
         </div>
         <span class="settings-entry__chevron" aria-hidden="true">></span>
       </button>

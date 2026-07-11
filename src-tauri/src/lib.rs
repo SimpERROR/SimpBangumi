@@ -1182,9 +1182,10 @@ struct UpdateCheckResult {
 
 /// 从 GitHub Releases API 获取最新版本号，与当前版本比较。
 /// 不依赖用户的 GitHub token，使用公共 API（有速率限制，但对启动检查足够）。
+/// 当前版本取自 tauri.conf.json 中的 version 字段，确保与实际发布版本一致。
 #[tauri::command]
-async fn check_github_update() -> Result<UpdateCheckResult, String> {
-    let current_version = env!("CARGO_PKG_VERSION").to_string();
+async fn check_github_update(app: tauri::AppHandle) -> Result<UpdateCheckResult, String> {
+    let current_version = app.package_info().version.to_string();
     let url = format!(
         "https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/releases/latest"
     );

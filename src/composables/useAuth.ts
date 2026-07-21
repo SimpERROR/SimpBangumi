@@ -1,6 +1,8 @@
 import { exchangeCodeForToken, refreshToken, type WorkerExchangeTokenResponse } from "../api/auth";
 import { useBangumi, type ApiResult } from "./useBangumi";
 import { useSessionStore } from "../stores/session";
+import { useAppStore } from "../stores/app";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AuthSession } from "../api/bangumi";
 
 const OAUTH_REDIRECT_URI = "http://127.0.0.1:46231/oauth/callback";
@@ -27,6 +29,7 @@ function sleep(ms: number) {
 export function useAuth() {
   const bangumi = useBangumi();
   const sessionStore = useSessionStore();
+  const appStore = useAppStore();
 
   async function startOAuthLogin(state?: string): Promise<ApiResult<string>> {
     logInfo("starting OAuth login");
@@ -80,17 +83,34 @@ export function useAuth() {
       };
     }
 
+    // OAuth code 已拿到，将应用窗口提到最前
+    try {
+      const appWindow = getCurrentWindow();
+      await appWindow.show();
+      await appWindow.unminimize();
+      // Windows 前台锁定绕行：短暂设为置顶再取消，强制提到最前
+      await appWindow.setAlwaysOnTop(true);
+      await appWindow.setFocus();
+      await appWindow.setAlwaysOnTop(false);
+    } catch {
+      // 非 Tauri 环境（浏览器 dev）忽略
+    }
+
     let tokenPayload: WorkerExchangeTokenResponse;
     try {
       logInfo("exchanging OAuth code via worker", { redirectUri: OAUTH_REDIRECT_URI });
+      appStore.workersCommunicating.value = true;
       tokenPayload = await exchangeCodeForToken(callback.data.code, OAUTH_REDIRECT_URI);
     } catch (error) {
       logError("worker code exchange failed", error);
+      appStore.workersCommunicating.value = false;
       return {
         ok: false,
         data: null,
         error: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      appStore.workersCommunicating.value = false;
     }
 
     logInfo("worker returned OAuth tokens", {

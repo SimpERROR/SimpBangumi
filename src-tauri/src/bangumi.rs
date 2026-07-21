@@ -74,7 +74,8 @@ impl BangumiClient {
         }
 
         if let Some(body) = body {
-            request = request.json(&body);
+            let cleaned = strip_null_fields(body);
+            request = request.json(&cleaned);
         }
 
         let response = request
@@ -98,6 +99,32 @@ impl BangumiClient {
             serde_json::from_str(&body)
                 .map_err(|err| format!("Failed to parse Bangumi API JSON: {err}"))
         }
+    }
+}
+
+/// Recursively remove null fields from a JSON Value (Object or Array).
+/// This prevents Tauri IPC from leaking `undefined`→`null` into API requests,
+/// which would cause Bangumi API to reject fields like `vol_status: null`.
+fn strip_null_fields(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let cleaned: serde_json::Map<String, Value> = map
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    let v = strip_null_fields(v);
+                    if v.is_null() {
+                        None
+                    } else {
+                        Some((k, v))
+                    }
+                })
+                .collect();
+            Value::Object(cleaned)
+        }
+        Value::Array(arr) => {
+            Value::Array(arr.into_iter().map(strip_null_fields).collect())
+        }
+        other => other,
     }
 }
 

@@ -23,6 +23,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Live2dModelInfo } from "./stores/app";
 import Live2dCompanion from "./components/Live2dCompanion.vue";
 import LinkConfirmModal from "./components/LinkConfirmModal.vue";
+import WorkersCommunicationModal from "./components/WorkersCommunicationModal.vue";
 import { checkTimeDrift, setTimeMismatch } from "./utils/timeCheck";
 import { useLinkInterceptor } from "./composables/useLinkInterceptor";
 
@@ -68,6 +69,8 @@ const completeViewRef = ref<{
 } | null>(null);
 const collectionsViewRef = ref<{
   openDetailBySubjectId: (subjectId: number) => Promise<void>;
+  openPersonDetail: (personId: number) => Promise<void>;
+  openCharacterDetail: (characterId: number) => Promise<void>;
 } | null>(null);
 const scheduleViewRef = ref<{
   refresh: () => Promise<void>;
@@ -314,6 +317,16 @@ function continueWithoutLogin() {
 async function handleSearchOpenSubject(subjectId: number) {
   await nextTick();
   await collectionsViewRef.value?.openDetailBySubjectId(subjectId);
+}
+
+async function handleSearchOpenCharacter(characterId: number) {
+  await nextTick();
+  await collectionsViewRef.value?.openCharacterDetail(characterId);
+}
+
+async function handleSearchOpenPerson(personId: number) {
+  await nextTick();
+  await collectionsViewRef.value?.openPersonDetail(personId);
 }
 
 function restorePersistedPreferences() {
@@ -710,7 +723,10 @@ watch(
 
           <div class="onboarding__grid">
             <p class="onboarding__description">
-              点击下方按钮后，应用会自动打开授权页面。
+              点击下方按钮后，应用会自动打开 OAuth 授权页面。
+            </p>
+            <p class="onboarding__description">
+              授权请求将通过我们部署的 Cloudflare Workers 转发。我们不会存储您的 Token 或账号信息。
             </p>
           </div>
 
@@ -774,7 +790,11 @@ watch(
         <ScheduleView ref="scheduleViewRef" @open-subject="handleSearchOpenSubject" />
       </div>
       <div v-if="activeHomeTab === 'search'" class="view-host view-host--search">
-        <SearchView @open-subject="handleSearchOpenSubject" />
+        <SearchView
+          @open-subject="handleSearchOpenSubject"
+          @open-character="handleSearchOpenCharacter"
+          @open-person="handleSearchOpenPerson"
+        />
       </div>
 
       <div v-if="activeHomeTab === 'settings'" class="view-host view-host--settings">
@@ -798,5 +818,6 @@ watch(
     />
 
     <LinkConfirmModal />
+    <WorkersCommunicationModal v-if="appStore.workersCommunicating.value" />
   </div>
 </template>

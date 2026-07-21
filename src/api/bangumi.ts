@@ -209,6 +209,52 @@ export interface SearchSubject {
   tags?: SubjectTag[];
 }
 
+export type PersonCareer =
+  | "producer"
+  | "mangaka"
+  | "artist"
+  | "seiyu"
+  | "writer"
+  | "illustrator"
+  | "actor";
+
+export interface SearchCharacter {
+  id: number;
+  name: string;
+  type: number;
+  images?: Record<string, string | undefined>;
+  summary: string;
+  locked: boolean;
+  stat: {
+    comments: number;
+    collects: number;
+  };
+}
+
+export interface SearchPerson {
+  id: number;
+  name: string;
+  type: number;
+  career: PersonCareer[];
+  images?: Record<string, string | undefined>;
+  summary: string;
+  locked: boolean;
+  stat: {
+    comments: number;
+    collects: number;
+  };
+}
+
+export interface CharacterSearchParams extends PageParams {
+  nsfw?: boolean;
+  sort?: "match" | "heat";
+}
+
+export interface PersonSearchParams extends PageParams {
+  career?: PersonCareer[];
+  sort?: "match" | "heat";
+}
+
 export interface CalendarWeekday {
   en: string;
   ja: string;
@@ -306,6 +352,18 @@ export interface CharacterDetail {
     comments: number;
     collects: number;
   };
+}
+
+export interface CharacterPerson {
+  id: number;
+  name: string;
+  type: number;
+  images?: Record<string, string | undefined>;
+  subject_id: number;
+  subject_type: number;
+  subject_name: string;
+  subject_name_cn: string;
+  staff?: string;
 }
 
 export class BangumiApiClient {
@@ -433,6 +491,10 @@ export class BangumiApiClient {
     return this.get<CharacterDetail>(`/v0/characters/${characterId}`);
   }
 
+  getCharacterRelatedPersons(characterId: number): Promise<CharacterPerson[]> {
+    return this.get<CharacterPerson[]>(`/v0/characters/${characterId}/persons`);
+  }
+
   fetchSubjectCommentsPage(
     subjectId: number,
     interestType?: SubjectCommentInterestType,
@@ -536,6 +598,56 @@ export class BangumiApiClient {
     return this.request<PagedResponse<SearchSubject>>(
       "POST",
       "/v0/search/subjects",
+      query,
+      body,
+    );
+  }
+
+  searchCharacters(
+    keyword: string,
+    params: CharacterSearchParams = {},
+  ): Promise<PagedResponse<SearchCharacter>> {
+    const query = toQuery({
+      limit: params.limit,
+      offset: params.offset,
+    });
+
+    const body = {
+      keyword,
+      sort: params.sort ?? "match",
+      filter: {
+        nsfw: params.nsfw ? true : undefined,
+      },
+    };
+
+    return this.request<PagedResponse<SearchCharacter>>(
+      "POST",
+      "/v0/search/characters",
+      query,
+      body,
+    );
+  }
+
+  searchPersons(
+    keyword: string,
+    params: PersonSearchParams = {},
+  ): Promise<PagedResponse<SearchPerson>> {
+    const query = toQuery({
+      limit: params.limit,
+      offset: params.offset,
+    });
+
+    const body = {
+      keyword,
+      sort: params.sort ?? "match",
+      filter: {
+        career: params.career?.length ? params.career : undefined,
+      },
+    };
+
+    return this.request<PagedResponse<SearchPerson>>(
+      "POST",
+      "/v0/search/persons",
       query,
       body,
     );

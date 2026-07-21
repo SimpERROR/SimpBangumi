@@ -60,7 +60,7 @@ function openDeveloperSettings() {
       <button class="item item--button settings-entry" type="button" @click="openUpdateSettings">
         <div class="settings-entry__content">
           <h3>更新选项</h3>
-          <p>控制应用版本更新的检查行为。</p>
+          <p>控制应用版本更新行为。</p>
         </div>
         <span class="settings-entry__chevron" aria-hidden="true">></span>
       </button>

@@ -688,6 +688,27 @@ h1 {
   justify-self: start;
 }
 
+.search-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.search-type-tabs {
+  flex-shrink: 0;
+}
+
+.search-item__summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .search-filters {
   display: grid;
   gap: 10px;
@@ -695,6 +716,24 @@ h1 {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
+}
+
+.search-filters-wrapper {
+  display: grid;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.filter-collapse-enter-active,
+.filter-collapse-leave-active {
+  transition: max-height 300ms ease, opacity 250ms ease;
+  max-height: 2000px;
+}
+
+.filter-collapse-enter-from,
+.filter-collapse-leave-to {
+  max-height: 0;
+  opacity: 0;
 }
 
 .search-filters label {
@@ -743,6 +782,30 @@ h1 {
 .search-filters__switch input {
   width: 16px;
   height: 16px;
+}
+
+.search-filter-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.search-filter-range__label {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.search-filter-range label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .search-warning {
@@ -1098,6 +1161,31 @@ h1 {
   box-shadow: 0 24px 54px color-mix(in srgb, #000000 55%, transparent);
   object-fit: contain;
   background: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+/* ── Image preview zoom transition ── */
+.preview-zoom-enter-active {
+  transition: opacity 280ms ease;
+}
+.preview-zoom-leave-active {
+  transition: opacity 200ms ease;
+}
+.preview-zoom-enter-from,
+.preview-zoom-leave-to {
+  opacity: 0;
+}
+
+.preview-zoom-enter-active .image-preview-overlay__image {
+  transition: transform 320ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+.preview-zoom-leave-active .image-preview-overlay__image {
+  transition: transform 240ms cubic-bezier(0.4, 0, 0.6, 1);
+}
+.preview-zoom-enter-from .image-preview-overlay__image {
+  transform: scale(0.85);
+}
+.preview-zoom-leave-to .image-preview-overlay__image {
+  transform: scale(0.9);
 }
 
 .detail-loading-card {
@@ -3524,4 +3612,86 @@ h1 {
   padding: 1px 8px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+/* ── Character Related Persons ── */
+
+.related-person-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  list-style: none;
+}
+
+.related-person-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.related-person-card--button {
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.related-person-card--button:hover,
+.related-person-card--button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  outline: none;
+}
+
+.related-person-card__avatar {
+  width: 44px;
+  height: 58px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 700;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.related-person-card__avatar--placeholder {
+  object-fit: unset;
+}
+
+.related-person-card__info {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.related-person-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-person-card__staff {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.related-person-card__subject {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

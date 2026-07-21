@@ -3,13 +3,19 @@ import {
   type AuthSession,
   type BangumiUser,
   type CharacterDetail,
+  type CharacterPerson,
+  type CharacterSearchParams,
   type Episode,
   type OAuthLoginStatus,
   type OAuthStartLoginRequest,
   type MonoType,
+  type PersonCareer,
   type PersonDetail,
+  type PersonSearchParams,
   type PagedResponse,
   type SubjectCommentInterestType,
+  type SearchCharacter,
+  type SearchPerson,
   type SearchSubject,
   type RelatedCharacter,
   type RelatedPerson,
@@ -145,6 +151,16 @@ export function useBangumi() {
     }
   }
 
+  async function getCharacterRelatedPersons(
+    characterId: number,
+  ): Promise<ApiResult<CharacterPerson[]>> {
+    try {
+      return ok(await bangumiApi.getCharacterRelatedPersons(characterId));
+    } catch (error) {
+      return fail<CharacterPerson[]>(error);
+    }
+  }
+
   async function fetchSubjectCommentsPage(
     subjectId: number,
     interestType?: SubjectCommentInterestType,
@@ -233,6 +249,36 @@ export function useBangumi() {
       });
     } catch (error) {
       return fail<PagedResponse<SearchSubject>>(error);
+    }
+  }
+
+  async function searchCharacters(
+    keyword: string,
+    params: CharacterSearchParams = {},
+  ): Promise<ApiResult<PagedResponse<SearchCharacter>>> {
+    try {
+      const response = await bangumiApi.searchCharacters(keyword, params);
+      return ok({
+        ...response,
+        data: response.data ?? [],
+      });
+    } catch (error) {
+      return fail<PagedResponse<SearchCharacter>>(error);
+    }
+  }
+
+  async function searchPersons(
+    keyword: string,
+    params: PersonSearchParams = {},
+  ): Promise<ApiResult<PagedResponse<SearchPerson>>> {
+    try {
+      const response = await bangumiApi.searchPersons(keyword, params);
+      return ok({
+        ...response,
+        data: response.data ?? [],
+      });
+    } catch (error) {
+      return fail<PagedResponse<SearchPerson>>(error);
     }
   }
 
@@ -364,6 +410,7 @@ export function useBangumi() {
     getSubjectDetail,
     getPersonDetail,
     getCharacterDetail,
+    getCharacterRelatedPersons,
     fetchSubjectCommentsPage,
     fetchMonoCommentsPage,
     getSubjectRelatedCharacters,
@@ -374,6 +421,8 @@ export function useBangumi() {
     getCurrentUserSubjectEpisodeCollections,
     updateCurrentUserEpisodeCollection,
     searchSubjects,
+    searchCharacters,
+    searchPersons,
     getCalendar,
   };
 }

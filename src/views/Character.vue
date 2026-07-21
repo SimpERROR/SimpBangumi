@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { useBangumi } from "../composables/useBangumi";
-import type { CharacterDetail } from "../api/bangumi";
+import type { CharacterDetail, CharacterPerson } from "../api/bangumi";
 import BbcodeSummary from "../components/BbcodeSummary.vue";
 
 const props = defineProps<{
@@ -10,15 +10,36 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   back: [];
+  navigatePerson: [personId: number];
 }>();
 
 const bangumi = useBangumi();
 const loading = ref(false);
 const error = ref("");
 const detail = ref<CharacterDetail | null>(null);
+const relatedPersons = ref<CharacterPerson[]>([]);
+const relatedPersonsLoading = ref(false);
+const relatedPersonsVisible = ref(6);
 
 function cover(images?: Record<string, string | undefined>) {
   return images?.large || images?.medium || images?.small || images?.grid || "";
+}
+
+function subjectTypeLabel(type?: number) {
+  switch (type) {
+    case 1:
+      return "书籍";
+    case 2:
+      return "动画";
+    case 3:
+      return "音乐";
+    case 4:
+      return "游戏";
+    case 6:
+      return "三次元";
+    default:
+      return type ? `类型${type}` : "-";
+  }
 }
 
 function characterTypeLabel(type?: number) {
@@ -101,6 +122,17 @@ async function loadCharacterDetail() {
 
   detail.value = result.data;
   loading.value = false;
+
+  // 加载关联人物
+  relatedPersonsLoading.value = true;
+  relatedPersons.value = [];
+  relatedPersonsVisible.value = 6;
+  const personsResult = await bangumi.getCharacterRelatedPersons(characterId);
+  if (personsResult.ok) {
+    relatedPersons.value = personsResult.data;
+  }
+
+  relatedPersonsLoading.value = false;
 }
 
 watch(
@@ -153,6 +185,52 @@ defineExpose({
           <div><dt>评论数</dt><dd>{{ detail.stat.comments }}</dd></div>
           <div><dt>锁定</dt><dd>{{ detail.locked ? "是" : "否" }}</dd></div>
         </dl>
+      </article>
+
+      <article class="detail-section">
+        <h4>关联人物</h4>
+        <section v-if="relatedPersonsLoading" class="empty">加载中...</section>
+        <section v-else-if="relatedPersons.length === 0" class="empty">暂无关联人物</section>
+        <template v-else>
+          <ul class="related-person-list">
+            <li
+              v-for="item in relatedPersons.slice(0, relatedPersonsVisible)"
+              :key="`${item.id}-${item.subject_id}`"
+              class="related-person-card related-person-card--button"
+              role="button"
+              tabindex="0"
+              @click="emit('navigatePerson', item.id)"
+              @keydown.enter.prevent="emit('navigatePerson', item.id)"
+              @keydown.space.prevent="emit('navigatePerson', item.id)"
+            >
+              <img
+                v-if="cover(item.images)"
+                :src="cover(item.images)"
+                alt=""
+                loading="lazy"
+                class="related-person-card__avatar"
+              />
+              <span v-else class="related-person-card__avatar related-person-card__avatar--placeholder">BG</span>
+              <div class="related-person-card__info">
+                <span class="related-person-card__name">{{ item.name }}</span>
+                <span class="related-person-card__staff" v-if="item.staff">{{ item.staff }}</span>
+                <span class="related-person-card__subject">
+                  {{ item.subject_name_cn || item.subject_name }}
+                  <span class="tag-chip tag-chip--meta">{{ subjectTypeLabel(item.subject_type) }}</span>
+                </span>
+              </div>
+            </li>
+          </ul>
+          <button
+            v-if="relatedPersonsVisible < relatedPersons.length"
+            class="secondary-button"
+            type="button"
+            style="margin-top:8px;width:100%"
+            @click="relatedPersonsVisible += 6"
+          >
+            加载更多（剩余 {{ relatedPersons.length - relatedPersonsVisible }} 名）
+          </button>
+        </template>
       </article>
 
       <article v-if="detail.infobox?.length" class="detail-section infobox">

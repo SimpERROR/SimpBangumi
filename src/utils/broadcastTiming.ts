@@ -161,7 +161,7 @@ export function calculateBroadcast(
       broadcastStatus = "finished";
       const finishedDate = new Date(airedTo!).toLocaleDateString("zh-CN");
       displayText = "完结撒花！";
-      subText = `番剧已成功配信完成，完结时间：${finishedDate}`;
+      subText = `番剧已全部配信完成，完结时间：${finishedDate}`;
     } else {
       // Finished long ago — show as ended, no next broadcast
       broadcastStatus = "ended-today";

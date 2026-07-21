@@ -15,6 +15,7 @@ import { isTimeMismatch } from "../utils/timeCheck";
 import type {
   BangumiUser,
   CharacterDetail,
+  CharacterPerson,
   Episode,
   MonoType,
   PersonDetail,
@@ -278,6 +279,9 @@ const personDetail = ref<PersonDetail | null>(null);
 const characterDetailLoading = ref(false);
 const characterDetailError = ref("");
 const characterDetail = ref<CharacterDetail | null>(null);
+const characterRelatedPersons = ref<CharacterPerson[]>([]);
+const characterRelatedPersonsLoading = ref(false);
+const characterRelatedPersonsVisible = ref(6);
 
 watch(personDetailLoading, (loading) => {
   if (!loading && personDetail.value) {
@@ -1006,6 +1010,23 @@ function characterBirthLabel(character: CharacterDetail) {
   return parts.join("-");
 }
 
+function subjectTypeLabel(type?: number) {
+  switch (type) {
+    case 1:
+      return "书籍";
+    case 2:
+      return "动画";
+    case 3:
+      return "音乐";
+    case 4:
+      return "游戏";
+    case 6:
+      return "三次元";
+    default:
+      return type ? `类型${type}` : "-";
+  }
+}
+
 function resetPersonDetail() {
   personDetailLoading.value = false;
   personDetailError.value = "";
@@ -1016,6 +1037,9 @@ function resetCharacterDetail() {
   characterDetailLoading.value = false;
   characterDetailError.value = "";
   characterDetail.value = null;
+  characterRelatedPersons.value = [];
+  characterRelatedPersonsLoading.value = false;
+  characterRelatedPersonsVisible.value = 6;
 }
 
 async function openPersonDetail(personId: number) {
@@ -1023,6 +1047,7 @@ async function openPersonDetail(personId: number) {
     return;
   }
 
+  detailOpen.value = true;
   personDetailLoading.value = true;
   personDetailError.value = "";
   personDetail.value = null;
@@ -1049,6 +1074,7 @@ async function openCharacterDetail(characterId: number) {
     return;
   }
 
+  detailOpen.value = true;
   characterDetailLoading.value = true;
   characterDetailError.value = "";
   characterDetail.value = null;
@@ -1068,15 +1094,33 @@ async function openCharacterDetail(characterId: number) {
 
   characterDetail.value = result.data;
   characterDetailLoading.value = false;
+
+  // 加载关联人物
+  characterRelatedPersonsLoading.value = true;
+  characterRelatedPersons.value = [];
+  const personsResult = await bangumi.getCharacterRelatedPersons(characterId);
+  if (personsResult.ok) {
+    characterRelatedPersons.value = personsResult.data;
+  }
+
+  characterRelatedPersonsLoading.value = false;
 }
 
 function closePersonDetail() {
+  if (!detail.value) {
+    closeDetail();
+    return;
+  }
   detailPage.value = "subject";
   monoDetailTab.value = "info";
   resetMonoComments();
 }
 
 function closeCharacterDetail() {
+  if (!detail.value) {
+    closeDetail();
+    return;
+  }
   detailPage.value = "subject";
   monoDetailTab.value = "info";
   resetMonoComments();
@@ -2048,15 +2092,20 @@ async function saveCollectionStatus() {
   collectionError.value = "";
   collectionSavedMessage.value = "";
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     type: form.type,
     rate: form.rate,
-    vol_status: subjectSupportsVolumeProgress.value ? form.vol_status : undefined,
-    ep_status: subjectSupportsEpisodeProgress.value ? form.ep_status : undefined,
     private: form.private,
     comment: form.comment.trim() || undefined,
     tags: parseTagsInput(form.tagsInput),
   };
+
+  // Bangumi API only accepts ep_status / vol_status for book subjects.
+  // For anime / real, ep_status is auto-computed from per-episode collection status.
+  if (detail.value?.type === SUBJECT_TYPE_BOOK) {
+    payload.vol_status = form.vol_status;
+    payload.ep_status = form.ep_status;
+  }
 
   const result = await bangumi.updateCurrentUserSubjectCollection(detail.value.id, payload);
 
@@ -2104,6 +2153,8 @@ function formatInfoboxValue(value: unknown): string {
 
 defineExpose({
   openDetailBySubjectId,
+  openPersonDetail,
+  openCharacterDetail,
 });
 </script>
 
@@ -2443,17 +2494,19 @@ defineExpose({
     </section>
   </div>
 
-  <div
-    v-if="imagePreviewVisible"
-    class="image-preview-overlay"
-    role="dialog"
-    aria-modal="true"
-    :aria-label="imagePreviewTitle || '图片预览'"
-    @click.self="closeImagePreview"
-  >
-    <button class="secondary-button image-preview-overlay__close" type="button" @click="closeImagePreview">关闭</button>
-    <img class="image-preview-overlay__image" :src="imagePreviewUrl" :alt="imagePreviewTitle || '图片预览'" />
-  </div>
+  <Transition name="preview-zoom">
+    <div
+      v-if="imagePreviewVisible"
+      class="image-preview-overlay"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="imagePreviewTitle || '图片预览'"
+      @click.self="closeImagePreview"
+    >
+      <button class="secondary-button image-preview-overlay__close" type="button" @click="closeImagePreview">关闭</button>
+      <img class="image-preview-overlay__image" :src="imagePreviewUrl" :alt="imagePreviewTitle || '图片预览'" />
+    </div>
+  </Transition>
 
   <div class="drawer-overlay" :class="{ 'is-open': detailOpen }" @click="closeDetail"></div>
   <aside class="detail-drawer" :class="{ 'is-open': detailOpen }" role="dialog" aria-modal="true" aria-label="条目详情">
@@ -2509,9 +2562,11 @@ defineExpose({
       </div>
     </header>
 
-    <section v-if="detailLoading" class="empty">详情加载中...</section>
+    <section v-if="detailLoading || personDetailLoading || characterDetailLoading" class="empty">详情加载中...</section>
     <section v-else-if="detailError" class="empty">详情加载失败：{{ detailError }}</section>
-    <section v-else-if="detail" ref="detailContentRef" class="detail-content" @scroll.passive="onDetailScroll">
+    <section v-else-if="personDetailError" class="empty">人物详情加载失败：{{ personDetailError }}</section>
+    <section v-else-if="characterDetailError" class="empty">角色详情加载失败：{{ characterDetailError }}</section>
+    <section v-else-if="detail || detailPage !== 'subject'" ref="detailContentRef" class="detail-content" @scroll.passive="onDetailScroll">
       <article v-if="detailPage === 'subject'" class="detail-hero">
         <div class="detail-hero__cover">
           <img
@@ -3380,6 +3435,52 @@ defineExpose({
                 <div><dt>评论数</dt><dd>{{ characterDetail.stat.comments }}</dd></div>
                 <div><dt>锁定</dt><dd>{{ characterDetail.locked ? "是" : "否" }}</dd></div>
               </dl>
+
+              <div>
+                <h5>关联人物</h5>
+                <p v-if="characterRelatedPersonsLoading" class="detail-muted">加载中...</p>
+                <p v-else-if="characterRelatedPersons.length === 0" class="detail-muted">暂无关联人物</p>
+                <template v-else>
+                  <ul class="related-person-list">
+                    <li
+                      v-for="item in characterRelatedPersons.slice(0, characterRelatedPersonsVisible)"
+                      :key="`${item.id}-${item.subject_id}`"
+                      class="related-person-card related-person-card--button"
+                      role="button"
+                      tabindex="0"
+                      @click="openPersonDetail(item.id)"
+                      @keydown.enter.prevent="openPersonDetail(item.id)"
+                      @keydown.space.prevent="openPersonDetail(item.id)"
+                    >
+                      <img
+                        v-if="personCover(item.images)"
+                        :src="personCover(item.images)"
+                        alt=""
+                        loading="lazy"
+                        class="related-person-card__avatar"
+                      />
+                      <span v-else class="related-person-card__avatar related-person-card__avatar--placeholder">BG</span>
+                      <div class="related-person-card__info">
+                        <span class="related-person-card__name">{{ item.name }}</span>
+                        <span class="related-person-card__staff" v-if="item.staff">{{ item.staff }}</span>
+                        <span class="related-person-card__subject">
+                          {{ item.subject_name_cn || item.subject_name }}
+                          <span class="tag-chip tag-chip--meta">{{ subjectTypeLabel(item.subject_type) }}</span>
+                        </span>
+                      </div>
+                    </li>
+                  </ul>
+                  <button
+                    v-if="characterRelatedPersonsVisible < characterRelatedPersons.length"
+                    class="secondary-button"
+                    type="button"
+                    style="margin-top:8px;width:100%"
+                    @click="characterRelatedPersonsVisible += 6"
+                  >
+                    加载更多（剩余 {{ characterRelatedPersons.length - characterRelatedPersonsVisible }} 名）
+                  </button>
+                </template>
+              </div>
 
               <div class="infobox" v-if="characterDetail.infobox?.length">
                 <h5>Infobox</h5>

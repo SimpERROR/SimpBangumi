@@ -47,6 +47,9 @@ const collectionSaveSuccessCounter = ref(0);
 // 更新选项
 const checkUpdateOnStartup = ref(true);
 
+// OAuth Workers 通信全屏弹窗
+const workersCommunicating = ref(false);
+
 export interface Live2dModelInfo {
   name: string;
   path: string;
@@ -120,5 +123,6 @@ export function useAppStore() {
     live2dAutoSpeakMinInterval,
     live2dAutoSpeakMaxInterval,
     checkUpdateOnStartup,
+    workersCommunicating,
   };
 }

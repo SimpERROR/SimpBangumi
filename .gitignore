@@ -17,5 +17,6 @@ target/
 target-check/
 public/
 AGENTS.md
+CLAUDE.md
 
 .env

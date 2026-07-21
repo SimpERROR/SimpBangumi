@@ -12,6 +12,7 @@ import { autoLinkPlainText } from "../utils/autoLink";
 import { matchAnimeToTenrai, getCachedMatch, searchTenraiForMatch, fetchMalAnimeFull, setManualMatch, isSuppressed, suppressBgmId, unsuppressBgmId, shouldConfirmMatch, confirmBgmId, type AnimeMatchInfo } from "../utils/animeMatch";
 import { TenraiApi } from "../api/Tenrai";
 import { isTimeMismatch } from "../utils/timeCheck";
+import { isFollowed, followSubject, unfollowSubject } from "../composables/useBroadcastNotify";
 import type {
   BangumiUser,
   CharacterDetail,
@@ -1947,6 +1948,23 @@ function handleEnableTenraiForSubject() {
   }
 }
 
+// ── Broadcast notify follow/unfollow ──
+
+const broadcastNotifyEnabled = localStorage.getItem("bangumi.broadcast.notifyEnabled") === "1";
+
+function handleToggleBroadcastFollow() {
+  const bgmId = detail.value?.id;
+  if (!bgmId) return;
+  if (isFollowed(bgmId)) {
+    unfollowSubject(bgmId);
+  } else {
+    const name = detail.value?.name_cn || detail.value?.name || `Subject #${bgmId}`;
+    const malId = TenraiMatch.value?.malId ?? 0;
+    followSubject(bgmId, name, malId);
+  }
+  detailMoreMenuOpen.value = false;
+}
+
 function closeDetail() {
   const wasNsfw = appStore.currentDetailNsfw.value;
   detailOpen.value = false;
@@ -2553,6 +2571,14 @@ defineExpose({
                 @click="detailMoreMenuOpen = false; isSuppressed(detail.id) ? handleEnableTenraiForSubject() : handleSuppressTenraiForSubject()"
               >
                 {{ isSuppressed(detail.id) ? '为此番剧开启配信跟踪' : '为此番剧关闭配信跟踪' }}
+              </button>
+              <button
+                v-if="broadcastNotifyEnabled && TenraiMatch"
+                class="detail-more-menu__item"
+                type="button"
+                @click="handleToggleBroadcastFollow()"
+              >
+                {{ isFollowed(detail.id) ? '取消关注配信情况' : '关注配信情况' }}
               </button>
             </template>
             <span v-else class="detail-more-menu__empty">此条目无可用选项。</span>

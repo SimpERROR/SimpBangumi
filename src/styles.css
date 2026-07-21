@@ -3695,3 +3695,106 @@ h1 {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Broadcast notification toast ── */
+
+.broadcast-notify-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 250;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  max-width: 360px;
+  pointer-events: none;
+}
+
+.broadcast-notify-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+  animation: broadcast-notify-in 280ms ease-out;
+}
+
+.broadcast-notify-toast__icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.broadcast-notify-toast__content {
+  flex: 1;
+  min-width: 0;
+}
+
+.broadcast-notify-toast__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.broadcast-notify-toast__message {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.broadcast-notify-toast__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.broadcast-notify-toast__close:hover {
+  background: color-mix(in srgb, var(--surface-muted) 70%, transparent);
+  color: var(--text);
+}
+
+/* TransitionGroup animations */
+.broadcast-notify-enter-active {
+  transition: all 280ms ease-out;
+}
+
+.broadcast-notify-leave-active {
+  transition: all 200ms ease-in;
+}
+
+.broadcast-notify-enter-from {
+  opacity: 0;
+  transform: translateX(40px);
+}
+
+.broadcast-notify-leave-to {
+  opacity: 0;
+  transform: translateX(40px);
+}
+
+.broadcast-notify-move {
+  transition: transform 220ms ease;
+}

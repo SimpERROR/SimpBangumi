@@ -26,6 +26,8 @@ import LinkConfirmModal from "./components/LinkConfirmModal.vue";
 import WorkersCommunicationModal from "./components/WorkersCommunicationModal.vue";
 import { checkTimeDrift, setTimeMismatch } from "./utils/timeCheck";
 import { useLinkInterceptor } from "./composables/useLinkInterceptor";
+import BroadcastNotifyToast from "./components/BroadcastNotifyToast.vue";
+import { useBroadcastNotify } from "./composables/useBroadcastNotify";
 
 type OnboardingReason = "first-launch" | "session-expired";
 
@@ -59,6 +61,7 @@ const pagination = usePagination({
 });
 const home = useHome({ pagination });
 useLinkInterceptor();
+const broadcastNotify = useBroadcastNotify();
 
 function preventContextMenu(e: MouseEvent) {
   e.preventDefault();
@@ -600,6 +603,11 @@ onMounted(() => {
         console.warn("[update] Update check failed:", err);
       });
   }
+
+  // Start broadcast notification system if enabled
+  if (localStorage.getItem("bangumi.broadcast.notifyEnabled") === "1") {
+    broadcastNotify.startBroadcastNotify();
+  }
 });
 
 onUnmounted(() => {
@@ -609,6 +617,7 @@ onUnmounted(() => {
     window.clearInterval(cookieAutoRefreshTimer.value);
     cookieAutoRefreshTimer.value = null;
   }
+  broadcastNotify.stopBroadcastNotify();
 });
 
 watch(
@@ -816,6 +825,8 @@ watch(
       :model-url="appStore.live2dModels.value.find(m => m.name === appStore.live2dActiveModel.value)?.path ?? undefined"
       @model-error="appStore.showToast($event, 'error')"
     />
+
+    <BroadcastNotifyToast />
 
     <LinkConfirmModal />
     <WorkersCommunicationModal v-if="appStore.workersCommunicating.value" />

@@ -3,6 +3,9 @@ import { ref, watch } from "vue";
 
 const DETAIL_SOURCE_KEY = "bangumi.broadcast.detailSource";
 const BROADCAST_DISABLED_KEY = "bangumi.broadcast.disabled";
+const NOTIFY_ENABLED_KEY = "bangumi.broadcast.notifyEnabled";
+const NOTIFY_BEFORE_MINUTES_KEY = "bangumi.broadcast.notifyBeforeMinutes";
+const NOTIFY_DELAY_MINUTES_KEY = "bangumi.broadcast.notifyDelayMinutes";
 type DetailSource = "tenrai" | "mal";
 
 const detailSource = ref<DetailSource>(
@@ -13,12 +16,36 @@ const broadcastDisabled = ref(
   localStorage.getItem(BROADCAST_DISABLED_KEY) === "1",
 );
 
+const notifyEnabled = ref(
+  localStorage.getItem(NOTIFY_ENABLED_KEY) === "1",
+);
+
+const notifyBeforeMinutes = ref(
+  Number(localStorage.getItem(NOTIFY_BEFORE_MINUTES_KEY)) || 5,
+);
+
+const notifyDelayMinutes = ref(
+  Number(localStorage.getItem(NOTIFY_DELAY_MINUTES_KEY)) || 0,
+);
+
 watch(detailSource, (val) => {
   localStorage.setItem(DETAIL_SOURCE_KEY, val);
 });
 
 watch(broadcastDisabled, (val) => {
   localStorage.setItem(BROADCAST_DISABLED_KEY, val ? "1" : "0");
+});
+
+watch(notifyEnabled, (val) => {
+  localStorage.setItem(NOTIFY_ENABLED_KEY, val ? "1" : "0");
+});
+
+watch(notifyBeforeMinutes, (val) => {
+  localStorage.setItem(NOTIFY_BEFORE_MINUTES_KEY, String(val));
+});
+
+watch(notifyDelayMinutes, (val) => {
+  localStorage.setItem(NOTIFY_DELAY_MINUTES_KEY, String(val));
 });
 </script>
 
@@ -58,6 +85,47 @@ watch(broadcastDisabled, (val) => {
           <option value="tenrai">Tenrai API</option>
           <option value="mal">MAL 官网爬取</option>
         </select>
+      </div>
+
+      <div class="item settings-entry">
+        <div class="settings-entry__content">
+          <h3>配信提示</h3>
+          <p>开启后可在动漫条目详情页关注番剧配信情况，在配信前和配信开始时收到浮窗通知。</p>
+        </div>
+        <label class="settings-toggle">
+          <input v-model="notifyEnabled" type="checkbox" />
+          <span class="settings-toggle__slider"></span>
+        </label>
+      </div>
+
+      <div v-if="notifyEnabled" class="item settings-entry">
+        <div class="settings-entry__content">
+          <h3>提前通知</h3>
+          <p>在番剧配信开始前多少分钟发送浮窗提示。</p>
+        </div>
+        <input
+          v-model.number="notifyBeforeMinutes"
+          type="number"
+          min="1"
+          max="120"
+          class="onboarding__input"
+          style="width: 80px"
+        />
+      </div>
+
+      <div v-if="notifyEnabled" class="item settings-entry">
+        <div class="settings-entry__content">
+          <h3>延迟通知</h3>
+          <p>所有配信通知将延迟指定分钟数后再显示。设为 0 则不延迟。</p>
+        </div>
+        <input
+          v-model.number="notifyDelayMinutes"
+          type="number"
+          min="0"
+          max="120"
+          class="onboarding__input"
+          style="width: 80px"
+        />
       </div>
     </div>
     <div class="settings-page__footer-note">

@@ -141,6 +141,7 @@ export function useHome(options: UseHomeOptions = {}) {
     }
 
     dataStore.collections.value = collectionsResult.data.data;
+    dataStore.updateSubjectCollectionMap(collectionsResult.data.data);
     appStore.total.value = collectionsResult.data.total;
     logInfo("collections loaded", {
       count: collectionsResult.data.data.length,

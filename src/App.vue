@@ -14,19 +14,20 @@ import {
   type TitlePreference,
   type ThemeMode,
 } from "./stores/app";
+import { useDataStore } from "./stores/data";
 import { useSessionStore } from "./stores/session";
 import { useBangumi } from "./composables/useBangumi";
 import { useAuth } from "./composables/useAuth";
 import { useHome } from "./composables/useHome";
 import { usePagination } from "./composables/usePagination";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Live2dModelInfo } from "./stores/app";
 import Live2dCompanion from "./components/Live2dCompanion.vue";
 import LinkConfirmModal from "./components/LinkConfirmModal.vue";
 import WorkersCommunicationModal from "./components/WorkersCommunicationModal.vue";
 import { checkTimeDrift, setTimeMismatch } from "./utils/timeCheck";
 import { useLinkInterceptor } from "./composables/useLinkInterceptor";
-import BroadcastNotifyToast from "./components/BroadcastNotifyToast.vue";
 import { useBroadcastNotify } from "./composables/useBroadcastNotify";
 
 type OnboardingReason = "first-launch" | "session-expired";
@@ -52,6 +53,7 @@ const TITLE_PREFERENCE_OPTIONS: TitlePreference[] = ["translated", "original"];
 const COOKIE_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 const appStore = useAppStore();
+const dataStore = useDataStore();
 const sessionStore = useSessionStore();
 const bangumi = useBangumi();
 const auth = useAuth();
@@ -178,6 +180,16 @@ function showOnboarding(reason: OnboardingReason) {
   onboarding.error = "";
 }
 
+async function populateSubjectCollectionMap() {
+  if (!sessionStore.authenticated.value) return;
+  try {
+    for (const ct of [1, 2, 3, 4, 5]) {
+      const result = await bangumi.getCollections({ limit: 100, offset: 0, type: ct });
+      if (result.ok) dataStore.updateSubjectCollectionMap(result.data.data);
+    }
+  } catch { /* ignore */ }
+}
+
 function evaluateOnboarding() {
   if (sessionStore.authenticated.value) {
     markAuthenticatedOnce();
@@ -222,6 +234,7 @@ async function handlePatLogin() {
   markOnboardingSeen();
   onboarding.visible = false;
   await home.fetchHome();
+  void populateSubjectCollectionMap();
   onboarding.submitting = false;
 }
 
@@ -264,6 +277,7 @@ async function handleOAuthAutoLogin() {
   markOnboardingSeen();
   onboarding.visible = false;
   await home.fetchHome();
+  void populateSubjectCollectionMap();
   onboarding.submitting = false;
 }
 
@@ -562,6 +576,7 @@ onMounted(() => {
 
   void home.fetchHome().then(async () => {
     sessionChecked.value = true;
+    void populateSubjectCollectionMap();
     if (sessionStore.authenticated.value && activeHomeTab.value === "complete") {
       await nextTick();
       await completeViewRef.value?.refresh();
@@ -608,6 +623,12 @@ onMounted(() => {
   if (localStorage.getItem("bangumi.broadcast.notifyEnabled") === "1") {
     broadcastNotify.startBroadcastNotify();
   }
+
+  // Close notification window when main window is about to close.
+  // Fire-and-forget — don't await, so the close isn't delayed.
+  void getCurrentWindow().onCloseRequested(() => {
+    broadcastNotify.stopBroadcastNotify();
+  });
 });
 
 onUnmounted(() => {
@@ -825,8 +846,6 @@ watch(
       :model-url="appStore.live2dModels.value.find(m => m.name === appStore.live2dActiveModel.value)?.path ?? undefined"
       @model-error="appStore.showToast($event, 'error')"
     />
-
-    <BroadcastNotifyToast />
 
     <LinkConfirmModal />
     <WorkersCommunicationModal v-if="appStore.workersCommunicating.value" />

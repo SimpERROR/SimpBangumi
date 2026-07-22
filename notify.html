@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>配信提示</title>
+    <style>
+      /* ── Light theme (default) ── */
+      :root {
+        --bg: #eef1f5;
+        --surface: #ffffff;
+        --surface-muted: #f6f8fb;
+        --border: #dce2ea;
+        --text: #1d2430;
+        --muted: #697386;
+        --accent: #2f6f63;
+        --accent-glow: rgba(47, 111, 99, 0.09);
+        --on-air-color: #d87f32;
+        --on-air-bg: #fef7f1;
+        --shadow: rgba(0,0,0,0.08);
+      }
+
+      /* ── Dark theme ── */
+      :root[data-theme="dark"] {
+        --bg: #1a1f26;
+        --surface: #21262d;
+        --surface-muted: #292e36;
+        --border: #30363d;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #5ea391;
+        --accent-glow: rgba(94, 163, 145, 0.14);
+        --on-air-color: #e88c3a;
+        --on-air-bg: #2d2420;
+        --shadow: rgba(0,0,0,0.2);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      /* Fully transparent — Tauri window handles the background */
+      html {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      body {
+        height: 100%;
+        margin: 0;
+        background: transparent !important;
+        background-color: transparent !important;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      /* Outer wrapper — fully transparent, cards float independently */
+      #app-shell {
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #container {
+        flex: 1;
+        display: flex;
+        flex-direction: column-reverse;
+        padding: 4px;
+        overflow-y: auto;
+        background: transparent;
+      }
+      #container::-webkit-scrollbar { width: 4px; }
+      #container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+      #empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      /* ── Card ── */
+      .card {
+        position: relative;
+        padding: 14px 16px;
+        border-radius: 10px;
+        border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+        background: var(--surface);
+        box-shadow: 0 2px 12px var(--shadow);
+        margin-bottom: 10px;
+        flex-shrink: 0;
+        overflow: hidden;
+      }
+      .card:last-child { margin-bottom: 0; }
+      .card.on-air {
+        border-color: color-mix(in srgb, var(--on-air-color) 48%, var(--border));
+        background: var(--on-air-bg);
+      }
+
+      /* ── Entry / exit animations ── */
+      .card.card-enter {
+        animation: card-in 320ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+      }
+      .card.card-exit {
+        animation: card-out 200ms ease-in forwards;
+      }
+      @keyframes card-in {
+        0%   { opacity: 0; transform: translateX(40px) scale(0.92); max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+        60%  { opacity: 1; transform: translateX(0) scale(1.01); }
+        70%  { max-height: 200px; margin-bottom: 10px; padding-top: 14px; padding-bottom: 14px; }
+        100% { opacity: 1; transform: translateX(0) scale(1); max-height: 200px; margin-bottom: 10px; padding-top: 14px; padding-bottom: 14px; }
+      }
+      @keyframes card-out {
+        0%   { opacity: 1; transform: translateX(0) scale(1); max-height: 200px; margin-bottom: 10px; padding-top: 14px; padding-bottom: 14px; }
+        30%  { opacity: 1; max-height: 200px; margin-bottom: 10px; padding-top: 14px; padding-bottom: 14px; }
+        100% { opacity: 0; transform: translateX(32px) scale(0.94); max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+      }
+
+      /* header */
+      .card__header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      .card__icon { width: 15px; height: 15px; color: var(--accent); flex-shrink: 0; }
+      .card__label {
+        font-size: 10.5px;
+        font-weight: 700;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+      }
+      .card__badge {
+        margin-left: auto;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 10px;
+        color: var(--muted);
+        background: var(--surface-muted);
+      }
+
+      /* title row: cover + names */
+      .card__title-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .card__cover {
+        width: 52px;
+        height: 72px;
+        border-radius: 6px;
+        object-fit: cover;
+        flex-shrink: 0;
+        background: var(--surface-muted);
+        border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+      }
+      .card__title-col {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 3px;
+      }
+      .card__name-primary {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text);
+        line-height: 1.35;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .card__name-secondary {
+        font-size: 11.5px;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* body rows */
+      .card__body {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        padding-top: 8px;
+        border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+      }
+      .card__row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .card__row--countdown {
+        padding: 5px 9px;
+        border-radius: 7px;
+        background: var(--accent-glow);
+      }
+      .card__row-label { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+      .card__row-value { font-size: 12px; color: var(--text); font-weight: 500; }
+      .card__countdown {
+        font-size: 17px;
+        font-weight: 700;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      .card__on-air { color: var(--on-air-color); font-weight: 600; }
+
+      /* close */
+      .card__close {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 22px; height: 22px;
+        border: none; border-radius: 5px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 13px;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: background .15s, color .15s;
+      }
+      .card__close:hover { background: var(--surface-muted); color: var(--text); }
+    </style>
+  </head>
+  <body>
+    <div id="app-shell">
+      <div id="container">
+        <div id="empty">暂无通知</div>
+      </div>
+    </div>
+    <script type="module" src="/src/notify.ts"></script>
+  </body>
+</html>

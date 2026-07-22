@@ -83,7 +83,7 @@ async function openEmbeddedLogin() {
     return;
   }
 
-  success.value = "已打开应用内登录窗口，请在窗口中完成登录后保持其开启，并点击“我已登录，自动获取”。";
+  success.value = "已打开应用内登录窗口，请在窗口中完成登录后保持其开启，并点击「我已登录，自动获取」。";
   openingEmbedded.value = false;
 }
 
@@ -204,83 +204,92 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="onboarding__panel settings-page">
-    <h2>网页登录与 Cookie</h2>
-    <p class="onboarding__description">
-      当网页抓取触发风控时，可先网页登录 Bangumi，再保存 Cookie 以用于抓取请求。
-    </p>
+  <div class="display-settings">
 
-    <article class="comment-box">
-      <div class="comment-box__header">
-        <h5>应用内登录并自动获取</h5>
-      </div>
-      <p class="detail-muted">
-        请在应用内窗口完成登录，在保持此窗口开启的情况下，再点击 “我已登录，自动获取” 自动保存 Cookie。
-      </p>
-      <div class="modal__actions">
-        <button class="primary-button" type="button" :disabled="openingEmbedded || capturingEmbedded" @click="openEmbeddedLogin">
-          {{ openingEmbedded ? "打开中..." : "应用内登录并自动获取" }}
-        </button>
-        <button class="secondary-button" type="button" :disabled="openingEmbedded || capturingEmbedded" @click="captureEmbeddedCookie">
-          {{ capturingEmbedded ? "读取中..." : "我已登录，自动获取" }}
-        </button>
-      </div>
-      <p class="detail-muted">
-        如果应用内窗口无法使用，可改为浏览器登录并手动粘贴 Cookie。
-      </p>
-      <div class="modal__actions">
-        <button class="secondary-button" type="button" @click="openBangumiLoginPage">
-          打开浏览器登录页
-        </button>
-      </div>
-    </article>
+    <!-- ═══ 登录与获取 ═══ -->
+    <section class="settings-card">
+      <h3 class="settings-card__title">网页登录与 Cookie</h3>
+      <p class="settings-card__desc">当网页抓取触发风控时，可先网页登录 Bangumi，再保存 Cookie 以用于抓取请求。</p>
 
-      <p v-if="error" class="onboarding__error">{{ error }}</p>
-      <p v-if="success" class="detail-success">{{ success }}</p>
-
-    <article class="comment-box">
-      <div class="comment-box__header">
-        <h5>Cookie 状态</h5>
+      <div class="settings-card__subsection">
+        <h4 class="settings-card__subtitle">应用内登录</h4>
+        <p class="settings-card__hint">在应用内窗口完成登录后，保持窗口开启并点击自动获取。</p>
+        <div class="settings-card__actions">
+          <button class="primary-button" type="button" :disabled="openingEmbedded || capturingEmbedded" @click="openEmbeddedLogin">
+            {{ openingEmbedded ? "打开中..." : "应用内登录" }}
+          </button>
+          <button class="secondary-button" type="button" :disabled="openingEmbedded || capturingEmbedded" @click="captureEmbeddedCookie">
+            {{ capturingEmbedded ? "读取中..." : "自动获取" }}
+          </button>
+        </div>
       </div>
 
-      <p v-if="loading" class="detail-muted">正在读取 Cookie 状态...</p>
+      <div class="settings-card__subsection">
+        <h4 class="settings-card__subtitle">浏览器登录</h4>
+        <p class="settings-card__hint">如果应用内窗口无法使用，可改为浏览器登录后手动粘贴 Cookie。</p>
+        <button class="secondary-button" type="button" style="justify-self: start;" @click="openBangumiLoginPage">打开浏览器登录页</button>
+      </div>
+    </section>
+
+    <!-- ═══ Cookie 管理 ═══ -->
+    <section class="settings-card">
+      <h3 class="settings-card__title">Cookie 管理</h3>
+
+      <p v-if="loading" class="settings-card__hint">正在读取 Cookie 状态...</p>
       <template v-else>
-        <p class="detail-muted">
-          当前状态：{{ cookieConfigured ? "已配置" : "未配置" }}
-        </p>
-        <p v-if="cookieUpdatedAt" class="detail-muted">
-          最近保存：{{ formatReadableDateTime(cookieUpdatedAt) }}
+        <p class="settings-card__hint">
+          当前状态：<strong>{{ cookieConfigured ? "已配置" : "未配置" }}</strong>
+          <template v-if="cookieUpdatedAt"> · 最近保存：{{ formatReadableDateTime(cookieUpdatedAt) }}</template>
         </p>
       </template>
 
-      <label>
-        <p>Cookie</p><br>
-        <textarea
-          v-model="cookieInput"
-          rows="4"
-          :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded"
-          placeholder="例如：chii_auth=...; chii_sid=..."
-        ></textarea>
-      </label>
+      <textarea
+        v-model="cookieInput"
+        class="web-login-textarea"
+        rows="4"
+        :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded"
+        placeholder="例如：chii_auth=...; chii_sid=..."
+      ></textarea>
 
-      <div class="modal__actions">
+      <div class="settings-card__actions">
         <button class="primary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="saveCookie">
           {{ saving ? "保存中..." : "保存 Cookie" }}
         </button>
         <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="clearCookie">
           {{ clearing ? "清除中..." : "清除 Cookie" }}
         </button>
-        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="refreshCookieStatus">
-          刷新状态
-        </button>
+        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="refreshCookieStatus">刷新状态</button>
         <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="validateCookie">
-          {{ validating ? "验证中..." : "验证 cookies 有效性" }}
+          {{ validating ? "验证中..." : "验证有效性" }}
         </button>
       </div>
 
-      <p class="detail-muted">
-        Cookie 将本地加密保存，应用不会回显或上传该值；抓取时仅在本地请求头中使用。
-      </p>
-    </article>
+      <p v-if="error" class="settings-card__error">{{ error }}</p>
+      <p v-if="success" class="settings-card__hint" style="color: var(--accent);">{{ success }}</p>
+
+      <p class="settings-card__hint">Cookie 将本地加密保存，应用不会回显或上传；抓取时仅在本地请求头中使用。</p>
+    </section>
+
   </div>
 </template>
+
+<style scoped>
+.web-login-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  transition: border-color 0.2s ease;
+}
+
+.web-login-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+</style>

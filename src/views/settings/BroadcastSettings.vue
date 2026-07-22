@@ -50,84 +50,60 @@ watch(notifyDelayMinutes, (val) => {
 </script>
 
 <template>
-  <div class="onboarding__panel settings-page">
-    <h3 class="settings-page__section-title">配信跟踪（Beta）</h3>
-    <p class="onboarding__description">
-      配置番剧配信信息的获取方式。
-    </p>
+  <div class="display-settings">
 
-    <div class="settings-entry-list">
-      <div class="item settings-entry">
-        <div class="settings-entry__content">
-          <h3>禁用配信跟踪</h3>
-          <p>开启后将不再获取任何番剧的配信信息。</p>
-        </div>
-        <label class="settings-toggle">
-          <input v-model="broadcastDisabled" type="checkbox" />
-          <span class="settings-toggle__slider"></span>
-        </label>
-      </div>
+    <!-- ═══ 数据源 ═══ -->
+    <section class="settings-card">
+      <h3 class="settings-card__title">配信跟踪</h3>
+      <p class="settings-card__desc">配置番剧配信信息的获取方式与数据源。</p>
 
-      <div class="item settings-entry">
-        <div class="settings-entry__content">
-          <h3>自动匹配数据源</h3>
-          <p>自动匹配在获取依赖信息时使用的数据源。</p>
-        </div>
-        <span class="settings-entry__fixed">Tenrai API</span>
-      </div>
+      <label class="toggle-row">
+        <span class="toggle-row__label">禁用配信跟踪</span>
+        <input v-model="broadcastDisabled" class="toggle-row__input" type="checkbox" role="switch" />
+        <span class="toggle-row__track" />
+      </label>
 
-      <div class="item settings-entry">
-        <div class="settings-entry__content">
-          <h3>详细信息数据源</h3>
-          <p>获取番剧配信时间、状态、集数等详细信息时使用的数据源。</p>
-        </div>
-        <select v-model="detailSource" class="onboarding__input" style="width:auto">
+      <div class="settings-card__subsection">
+        <h4 class="settings-card__subtitle">详细信息数据源</h4>
+        <p class="settings-card__hint">获取番剧配信时间、状态、集数等信息时使用的数据源。自动匹配默认使用 Tenrai API。</p>
+        <select v-model="detailSource" class="broadcast-select">
           <option value="tenrai">Tenrai API</option>
           <option value="mal">MAL 官网爬取</option>
         </select>
       </div>
+    </section>
 
-      <div class="item settings-entry">
-        <div class="settings-entry__content">
-          <h3>配信提示</h3>
-          <p>开启后可在动漫条目详情页关注番剧配信情况，在配信前和配信开始时收到浮窗通知。</p>
-        </div>
-        <label class="settings-toggle">
-          <input v-model="notifyEnabled" type="checkbox" />
-          <span class="settings-toggle__slider"></span>
-        </label>
-      </div>
+    <!-- ═══ 配信提示 ═══ -->
+    <section class="settings-card">
+      <h3 class="settings-card__title">配信提示</h3>
+      <p class="settings-card__desc">在番剧配信前和配信开始时收到浮窗通知。</p>
 
-      <div v-if="notifyEnabled" class="item settings-entry">
-        <div class="settings-entry__content">
-          <h3>提前通知</h3>
-          <p>在番剧配信开始前多少分钟发送浮窗提示。</p>
-        </div>
-        <input
-          v-model.number="notifyBeforeMinutes"
-          type="number"
-          min="1"
-          max="120"
-          class="onboarding__input"
-          style="width: 80px"
-        />
-      </div>
+      <label class="toggle-row">
+        <span class="toggle-row__label">启用配信提示</span>
+        <input v-model="notifyEnabled" class="toggle-row__input" type="checkbox" role="switch" />
+        <span class="toggle-row__track" />
+      </label>
 
-      <div v-if="notifyEnabled" class="item settings-entry">
-        <div class="settings-entry__content">
-          <h3>延迟通知</h3>
-          <p>所有配信通知将延迟指定分钟数后再显示。设为 0 则不延迟。</p>
+      <template v-if="notifyEnabled">
+        <div class="settings-card__field">
+          <label class="settings-card__field-label">提前通知（分钟）</label>
+          <div class="settings-card__row">
+            <input v-model.number="notifyBeforeMinutes" type="number" min="1" max="120" class="onboarding__input" style="width: 80px;" />
+            <span class="settings-card__hint">配信开始前多少分钟发送提示</span>
+          </div>
         </div>
-        <input
-          v-model.number="notifyDelayMinutes"
-          type="number"
-          min="0"
-          max="120"
-          class="onboarding__input"
-          style="width: 80px"
-        />
-      </div>
-    </div>
+
+        <div class="settings-card__field">
+          <label class="settings-card__field-label">延迟通知（分钟）</label>
+          <div class="settings-card__row">
+            <input v-model.number="notifyDelayMinutes" type="number" min="0" max="120" class="onboarding__input" style="width: 80px;" />
+            <span class="settings-card__hint">所有通知延迟发送，设为 0 则不延迟</span>
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- ═══ 数据源提示 ═══ -->
     <div class="settings-page__footer-note">
       <div class="footer-note__header">
         <svg class="footer-note__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640"><path d="M424.5 355.1C449 329.2 464 294.4 464 256C464 176.5 399.5 112 320 112C240.5 112 176 176.5 176 256C176 294.4 191 329.2 215.5 355.1C236.8 377.5 260.4 409.1 268.8 448L371.2 448C379.6 409 403.2 377.5 424.5 355.1zM459.3 388.1C435.7 413 416 443.4 416 477.7L416 496C416 540.2 380.2 576 336 576L304 576C259.8 576 224 540.2 224 496L224 477.7C224 443.4 204.3 413 180.7 388.1C148 353.7 128 307.2 128 256C128 150 214 64 320 64C426 64 512 150 512 256C512 307.2 492 353.7 459.3 388.1zM272 248C272 261.3 261.3 272 248 272C234.7 272 224 261.3 224 248C224 199.4 263.4 160 312 160C325.3 160 336 170.7 336 184C336 197.3 325.3 208 312 208C289.9 208 272 225.9 272 248z" fill="currentColor"/></svg>
@@ -138,5 +114,14 @@ watch(notifyDelayMinutes, (val) => {
         <li>MAL 官网爬取速度较慢但数据更及时，且不受第三方 API 状态影响。</li>
       </ul>
     </div>
+
   </div>
 </template>
+
+<style scoped>
+.broadcast-select {
+  width: auto;
+  min-width: 160px;
+  justify-self: start;
+}
+</style>

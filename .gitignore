@@ -18,5 +18,5 @@ target-check/
 public/
 AGENTS.md
 CLAUDE.md
-
+.claude/
 .env

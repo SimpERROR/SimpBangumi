@@ -1588,7 +1588,7 @@ function collectionFromSnapshot(snapshot: SubjectCollection | null, subjectId: n
     subject_id: subjectId,
     subject_type: snapshot.subject?.type ?? 2,
     rate: snapshot.rate ?? 0,
-    type: snapshot.type ?? 2,
+    type: snapshot.type ?? 0,
     comment: snapshot.comment,
     tags: [],
     ep_status: 0,

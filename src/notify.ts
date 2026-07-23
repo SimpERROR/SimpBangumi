@@ -79,9 +79,8 @@ function formatCountdown(sec: number): string {
 }
 
 function liveCountdown(n: BroadcastNotification): number {
-  if (n.type !== "before-broadcast" || n.countdownSeconds <= 0) return 0;
-  const elapsed = Math.floor((Date.now() - n.timestamp) / 1000);
-  return Math.max(0, n.countdownSeconds - elapsed);
+  if (n.type !== "before-broadcast") return 0;
+  return Math.max(0, Math.floor((n.broadcastTime - Date.now()) / 1000));
 }
 
 function escapeHtml(s: string): string {
@@ -203,11 +202,8 @@ function renderAll() {
 }
 
 function updateCountdowns() {
-  const now = Date.now();
   for (const n of notifications) {
-    const remaining = n.type === "before-broadcast"
-      ? Math.max(0, n.countdownSeconds - Math.floor((now - n.timestamp) / 1000))
-      : 0;
+    const remaining = liveCountdown(n);
     const el = document.querySelector(`[data-countdown="${n.id}"] .card__countdown`);
     if (el) {
       el.textContent = formatCountdown(remaining);

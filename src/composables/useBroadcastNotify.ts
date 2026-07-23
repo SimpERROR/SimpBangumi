@@ -81,11 +81,13 @@ let notifyWindow: WebviewWindow | null = null;
 // ▸▸ Helpers
 
 function getNotifyHtmlUrl(): string {
-  // In dev mode, use the Vite dev server; in prod, Tauri serves from dist via asset protocol
+  // In dev mode, use the Vite dev server; in prod, pass a bare path so Tauri
+  // resolves it as WebviewUrl::App (relative to frontendDist), avoiding the
+  // full https://asset.localhost URL being treated as an external URL.
   if (typeof window !== "undefined" && window.location.hostname === "localhost") {
     return `http://localhost:1420/notify.html`;
   }
-  return `asset://localhost/notify.html`;
+  return `/notify.html`;
 }
 
 async function ensureNotifyWindow(): Promise<WebviewWindow | null> {
@@ -217,9 +219,6 @@ async function checkAndNotify(): Promise<void> {
       const notifyTargetMs = broadcastStartMs - notifyBeforeMin * 60 * 1000 + delayMs;
 
       if (now >= notifyTargetMs && lastNotifiedType.get(subject.bgmId) !== typeKey) {
-        // Use the actual remaining seconds from timing — the delay is already
-        // accounted for in notifyTargetMs (it shifts when the notification fires),
-        // so we must NOT subtract delayMs again here.
         const remainingSec = Math.max(1, Math.round(timing.countdownSeconds));
         const sent = await showNotificationOnWindow({
           id: `bn-${Date.now()}-${nextId++}`,
@@ -228,7 +227,7 @@ async function checkAndNotify(): Promise<void> {
           type: "before-broadcast",
           message: `将在约 ${Math.max(1, Math.round(remainingSec / 60))} 分钟后开始配信。`,
           broadcastTime: broadcastStartMs,
-          countdownSeconds: remainingSec,
+          countdownSeconds: 0,
           delayMinutes: notifyDelayMin,
           timestamp: now,
           coverUrl: subject.coverUrl,

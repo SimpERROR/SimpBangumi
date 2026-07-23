@@ -17,6 +17,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         legacy: resolve(__dirname, "legacy.html"),
+        notify: resolve(__dirname, "notify.html"),
       },
     },
   },

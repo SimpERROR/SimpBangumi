@@ -495,11 +495,11 @@ async function prevPage() {
       <div class="search-filter-range">
         <span class="search-filter-range__label">排名（越小越高）</span>
         <label>
-          不劣于
+          不劣于（≤）
           <input v-model.number="subjectFilterForm.rankMin" class="onboarding__input" type="number" min="1" step="1" placeholder="可选" />
         </label>
         <label>
-          不优于
+          不优于（≥）
           <input v-model.number="subjectFilterForm.rankMax" class="onboarding__input" type="number" min="1" step="1" placeholder="如：300" />
         </label>
       </div>

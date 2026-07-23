@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-v2-blueviolet.svg" alt="Tauri Version"></a>
+  <a href="https://github.com/SimpERROR/SimpBangumi/actions/workflows/release.yml"><img src="https://github.com/SimpERROR/SimpBangumi/actions/workflows/release.yml/badge.svg" alt="Build Action Status"></img></a>
 </p>
 
 <p align="center">

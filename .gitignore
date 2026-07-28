@@ -20,3 +20,10 @@ AGENTS.md
 CLAUDE.md
 .claude/
 .env
+.env.*
+!.env.example
+!.env.*.example
+
+worker/.wrangler/
+worker/.dev.vars
+worker/wrangler.test.jsonc

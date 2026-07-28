@@ -27,6 +27,7 @@ type EpisodeState = {
   episodeLoading: boolean;
   episodeError: string;
   episodeSavingId: number | null;
+  episodeMarking: boolean;
   episodePopoverPlacement: Record<number, { horizontal: "left" | "center" | "right"; vertical: "up" | "down" }>;
 };
 
@@ -293,6 +294,7 @@ function ensureEpisodeState(subjectId: number): EpisodeState {
     episodeLoading: false,
     episodeError: "",
     episodeSavingId: null,
+    episodeMarking: false,
     episodePopoverPlacement: {},
   };
 
@@ -516,18 +518,39 @@ async function updateEpisodeStatus(subjectId: number, episodeId: number, nextTyp
 
 async function markEpisodeAndPreviousSeen(subjectId: number, episodeId: number) {
   const state = ensureEpisodeState(subjectId);
-  const orderedEpisodes = [...state.episodes].sort((left, right) => Number(left.sort ?? 0) - Number(right.sort ?? 0));
+  if (state.episodeMarking) {
+    return;
+  }
+
+  const targetEpisode = state.episodes.find((episode) => episode.id === episodeId);
+
+  if (!targetEpisode) {
+    return;
+  }
+
+  // "看到" only advances episodes within the same category (main, SP, OP, or ED).
+  const orderedEpisodes = state.episodes
+    .filter((episode) => episode.type === targetEpisode.type)
+    .sort((left, right) => Number(left.sort ?? 0) - Number(right.sort ?? 0));
   const targetIndex = orderedEpisodes.findIndex((episode) => episode.id === episodeId);
 
   if (targetIndex < 0) {
     return;
   }
 
-  for (const episode of orderedEpisodes.slice(0, targetIndex + 1)) {
-    const updated = await updateEpisodeStatus(subjectId, episode.id, 2);
-    if (!updated) {
-      return;
-    }
+  const episodesToMark = orderedEpisodes
+    .slice(0, targetIndex + 1)
+    .filter((episode) => episodeStatusType(subjectId, episode.id) !== 2);
+  if (episodesToMark.length === 0) {
+    return;
+  }
+
+  state.episodeMarking = true;
+
+  try {
+    await Promise.all(episodesToMark.map((episode) => updateEpisodeStatus(subjectId, episode.id, 2)));
+  } finally {
+    state.episodeMarking = false;
   }
 }
 
@@ -596,7 +619,7 @@ defineExpose({
         <span>{{ subjectGroup.total }} 条</span>
       </header>
 
-      <div class="complete-items">
+      <TransitionGroup name="item-reveal" tag="div" class="complete-items">
         <article v-for="collection in subjectGroup.items" :key="collection.subject_id ?? collection.updated_at ?? collection.comment" class="item complete-item">
           <div class="cover">
             <img v-if="cover(collection.subject?.images)" :src="cover(collection.subject?.images)" alt="" loading="lazy" />
@@ -674,7 +697,7 @@ defineExpose({
                           收藏状态
                           <select
                             :value="episodeStatusType(collection.subject_id ?? 0, episode.id)"
-                            :disabled="episodeStates[collection.subject_id ?? 0]?.episodeSavingId === episode.id"
+                            :disabled="episodeStates[collection.subject_id ?? 0]?.episodeMarking || episodeStates[collection.subject_id ?? 0]?.episodeSavingId === episode.id"
                             @change="updateEpisodeStatus(collection.subject_id ?? 0, episode.id, Number(($event.target as HTMLSelectElement).value))"
                           >
                             <option :value="0">未看</option>
@@ -682,7 +705,12 @@ defineExpose({
                           </select>
                         </label>
 
-                        <button class="secondary-button episode-popover__action" type="button" @click="markEpisodeAndPreviousSeen(collection.subject_id ?? 0, episode.id)">
+                        <button
+                          class="secondary-button episode-popover__action"
+                          type="button"
+                          :disabled="episodeStates[collection.subject_id ?? 0]?.episodeMarking"
+                          @click="markEpisodeAndPreviousSeen(collection.subject_id ?? 0, episode.id)"
+                        >
                           看到
                         </button>
                       </section>
@@ -697,7 +725,7 @@ defineExpose({
             <p v-else class="detail-muted">该条目不支持章节状态管理。</p>
           </div>
         </article>
-      </div>
+      </TransitionGroup>
     </article>
 
     <Pager

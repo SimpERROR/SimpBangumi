@@ -280,6 +280,19 @@ function handleRefreshDialog() {
         <span class="toggle-row__track" />
       </label>
 
+      <label class="toggle-row" :class="{ 'is-disabled': !hasModel }" :title="!hasModel ? '请先导入模型' : undefined">
+        <span class="toggle-row__label">锁定模型操作</span>
+        <input
+          v-model="appStore.live2dOperationLocked.value"
+          class="toggle-row__input"
+          type="checkbox"
+          role="switch"
+          :disabled="!hasModel"
+        />
+        <span class="toggle-row__track" />
+      </label>
+      <p class="settings-card__hint">锁定后无法拖拽移动或滚轮缩放模型，点击模型说话和展开/收起不受影响。</p>
+
       <!-- 模型管理 -->
       <div class="settings-card__subsection">
         <h4 class="settings-card__subtitle">模型管理</h4>

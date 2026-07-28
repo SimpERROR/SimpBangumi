@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::time::Instant;
 use tauri::Manager;
@@ -7,15 +7,39 @@ use tauri::Manager;
 
 #[derive(Serialize)]
 struct DiagnosticReport {
+    schema_version: u32,
     generated_at: String,
     environment: EnvironmentInfo,
+    authentication: AuthenticationInfo,
     network: NetworkInfo,
+    log_summary: LogSummary,
     backend_logs: Vec<String>,
     frontend_logs: Option<Vec<String>>,
     sanitization_note: String,
     disclaimer: String,
 }
 
+#[derive(Serialize)]
+struct LogSummary {
+    backend: LogStats,
+    frontend: LogStats,
+}
+
+#[derive(Serialize)]
+struct LogStats {
+    retained: usize,
+    dropped: usize,
+    capacity: usize,
+    truncated: bool,
+    count_consistent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FrontendLogStats {
+    retained: usize,
+    dropped: usize,
+    capacity: usize,
+}
 #[derive(Serialize)]
 struct EnvironmentInfo {
     app_name: String,
@@ -28,6 +52,15 @@ struct EnvironmentInfo {
     client_timezone: String,
     client_locale: Option<String>,
     cargo_pkg_version: String,
+}
+
+#[derive(Serialize)]
+struct AuthenticationInfo {
+    storage_status: &'static str,
+    source: Option<&'static str>,
+    expires_at: Option<i64>,
+    user_profile_available: bool,
+    storage_error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -136,11 +169,7 @@ fn get_webview2_version() -> Option<String> {
 fn get_client_timezone() -> String {
     // Try PowerShell timezone
     if let Ok(output) = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "(Get-TimeZone).DisplayName",
-        ])
+        .args(["-NoProfile", "-Command", "(Get-TimeZone).DisplayName"])
         .output()
     {
         if output.status.success() {
@@ -153,7 +182,11 @@ fn get_client_timezone() -> String {
 
     // Fallback: use time crate
     if let Ok(offset) = time::UtcOffset::current_local_offset() {
-        return format!("UTC{:+03}:{:02}", offset.whole_hours(), offset.minutes_past_hour().unsigned_abs());
+        return format!(
+            "UTC{:+03}:{:02}",
+            offset.whole_hours(),
+            offset.minutes_past_hour().unsigned_abs()
+        );
     }
 
     "unknown".to_string()
@@ -167,11 +200,7 @@ fn get_client_locale() -> Option<String> {
         .or_else(|| {
             // Windows locale via PowerShell
             Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    "(Get-Culture).Name",
-                ])
+                .args(["-NoProfile", "-Command", "(Get-Culture).Name"])
                 .output()
                 .ok()
                 .and_then(|o| {
@@ -218,7 +247,11 @@ async fn test_connectivity(url: &str) -> ConnectivityResult {
                 url: url.to_string(),
                 reachable: status >= 200 && status < 500,
                 status_code: Some(status),
-                error: if status >= 500 { Some(format!("Server error: {status}")) } else { None },
+                error: if status >= 500 {
+                    Some(format!("Server error: {status}"))
+                } else {
+                    None
+                },
                 latency_ms: start.elapsed().as_millis() as u64,
             }
         }
@@ -234,141 +267,362 @@ async fn test_connectivity(url: &str) -> ConnectivityResult {
 
 // ── Sanitization ────────────────────────────────────────────
 
-/// Extract the current Windows username from USERPROFILE, if possible.
-fn get_windows_username() -> Option<String> {
-    let userprofile = std::env::var("USERPROFILE").ok()?;
-    std::path::Path::new(&userprofile)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|s| s.to_string())
+const REDACTED: &str = "[REDACTED]";
+const SENSITIVE_KEYS: &[&str] = &[
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "chii_auth",
+    "chii_sid",
+    "chii_cookietime",
+    "chii_sec",
+    "client_secret",
+    "code_verifier",
+    "oauth_code",
+    "authorization_code",
+    "device_id",
+    "username",
+    "nickname",
+    "user_id",
+    "email",
+    "password",
+];
+
+struct SensitiveIdentity {
+    value: String,
+    replacement: &'static str,
 }
 
-fn sanitize_string(input: &str) -> String {
-    let mut result = input.to_string();
-
-    // ── Redact Windows username in all path variants ──────
-    if let Some(ref username) = get_windows_username() {
-        if !username.is_empty() {
-            // Single backslash: C:\Users\ALW\
-            let pattern1 = format!(":\\Users\\{}\\", username);
-            result = result.replace(&pattern1, &format!(":\\Users\\<USER>\\"));
-
-            // Double backslash (JSON-escaped): C:\\Users\\ALW\\
-            let pattern2 = format!(":\\\\Users\\\\{}\\\\", username);
-            result = result.replace(&pattern2, &format!(":\\\\Users\\\\<USER>\\\\"));
-
-            // Forward slash (URL-style): C:/Users/ALW/
-            let pattern3 = format!(":/Users/{}/", username);
-            result = result.replace(&pattern3, ":/Users/<USER>/");
-
-            // URL-encoded: %2FUsers%2FALW%2F (case-sensitive, the username part)
-            let pattern4 = format!("%2FUsers%2F{}%2F", username);
-            result = result.replace(&pattern4, "%2FUsers%2F<USER>%2F");
-
-            // Standalone %5C encoded: %5CUsers%5CALW%5C
-            let pattern5 = format!("%5CUsers%5C{}%5C", username);
-            result = result.replace(&pattern5, "%5CUsers%5C<USER>%5C");
-
-            // Also handle 'Users\USERNAME\' at any position (not just C:)
-            // for paths that may appear without the drive letter prefix
-        }
-    }
-
-    // ── Redact %USERPROFILE% env var style ─────────────────
-    if let Ok(userprofile) = std::env::var("USERPROFILE") {
-        result = result.replace(&userprofile, r"C:\Users\<USER>");
-    }
-
-    // Also try to catch HOME style
-    if let Ok(home) = std::env::var("HOME") {
-        result = result.replace(&home, "<HOME>");
-    }
-
-    // ── Redact common token/secret patterns ────────────────
-    let sensitive_keys = [
-        "access_token",
-        "refresh_token",
-        "chii_auth",
-        "chii_sid",
-        "chii_cookietime",
-        "chii_sec",
-        "Authorization",
-        "authorization",
-    ];
-
-    for key in &sensitive_keys {
-        // JSON pattern: "key":"value"
-        let pattern = format!("\"{}\":\"", key);
-        result = redact_json_value(&result, &pattern);
-
-        // JSON pattern: "key": "value"
-        let pattern_spaced = format!("\"{}\": \"", key);
-        result = redact_json_value(&result, &pattern_spaced);
-    }
-
-    // ── Redact Bearer tokens ───────────────────────────────
-    result = redact_bearer_tokens(&result);
-
-    result
+struct SanitizationContext {
+    exact_values: Vec<SensitiveIdentity>,
+    user_profile: Option<String>,
+    home: Option<String>,
 }
 
-/// Replace the value after a JSON key pattern with [REDACTED].
-fn redact_json_value(text: &str, pattern: &str) -> String {
-    let mut result = text.to_string();
-    let mut search_start = 0;
-    while let Some(start) = result[search_start..].find(pattern) {
-        let abs_start = search_start + start;
-        let value_start = abs_start + pattern.len();
-        if let Some(rest) = result.get(value_start..) {
-            if let Some(end) = rest.find('"') {
-                let before = &result[..value_start];
-                let after = &result[value_start + end..];
-                result = format!("{}[REDACTED]{}", before, after);
-                search_start = value_start + "[REDACTED]".len();
-                continue;
+impl SanitizationContext {
+    fn new(user: Option<&crate::bangumi::BangumiUser>) -> Self {
+        let mut context = Self {
+            exact_values: Vec::new(),
+            user_profile: std::env::var("USERPROFILE").ok().filter(|v| !v.is_empty()),
+            home: std::env::var("HOME").ok().filter(|v| !v.is_empty()),
+        };
+
+        if let Some(profile) = context.user_profile.clone() {
+            if let Some(username) = last_path_component(&profile) {
+                context.add_identity(username, "[OS_USERNAME]");
             }
         }
-        search_start = abs_start + 1;
+        if let Some(user) = user {
+            context.add_identity(user.id.to_string(), "[BANGUMI_USER_ID]");
+            context.add_identity(user.username.clone(), "[BANGUMI_USERNAME]");
+            context.add_identity(user.nickname.clone(), "[BANGUMI_NICKNAME]");
+        }
+        context
     }
-    result
-}
 
-/// Redact Bearer <token> patterns.
-fn redact_bearer_tokens(text: &str) -> String {
-    let mut new_result = String::new();
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if i + 7 <= chars.len() {
-            let slice: String = chars[i..i + 7].iter().collect();
-            if slice.eq_ignore_ascii_case("Bearer ") {
-                new_result.push_str("Bearer [REDACTED]");
-                i += 7;
-                while i < chars.len() && !chars[i].is_whitespace() {
-                    i += 1;
+    fn add_identity(&mut self, value: String, replacement: &'static str) {
+        let value = value.trim();
+        if value.is_empty() || value.starts_with('[') {
+            return;
+        }
+        self.exact_values.push(SensitiveIdentity {
+            value: value.to_string(),
+            replacement,
+        });
+
+        let encoded: String = url::form_urlencoded::byte_serialize(value.as_bytes()).collect();
+        if encoded != value {
+            self.exact_values.push(SensitiveIdentity {
+                value: encoded,
+                replacement,
+            });
+        }
+    }
+
+    fn sanitize(&self, input: &str) -> String {
+        let mut result = redact_user_directory_segments(input);
+        result = redact_bangumi_user_paths(&result);
+
+        for (profile, replacement) in [
+            (self.user_profile.as_deref(), r"C:\Users\[OS_USERNAME]"),
+            (self.home.as_deref(), "[HOME]"),
+        ] {
+            if let Some(profile) = profile {
+                result = replace_ascii_case_insensitive(&result, profile, replacement);
+                let escaped = profile.replace(char::from(92), r"\\");
+                if escaped != profile {
+                    result = replace_ascii_case_insensitive(
+                        &result,
+                        &escaped,
+                        &replacement.replace(char::from(92), r"\\"),
+                    );
                 }
-                continue;
+                let encoded: String =
+                    url::form_urlencoded::byte_serialize(profile.as_bytes()).collect();
+                result = replace_ascii_case_insensitive(&result, &encoded, replacement);
             }
         }
-        new_result.push(chars[i]);
-        i += 1;
+
+        for identity in &self.exact_values {
+            result = replace_bounded_ascii_case_insensitive(
+                &result,
+                &identity.value,
+                identity.replacement,
+            );
+        }
+
+        result = redact_bearer_tokens(&result);
+        for key in SENSITIVE_KEYS {
+            result = redact_assigned_values(&result, key);
+        }
+        result
     }
-    new_result
+
+    #[cfg(test)]
+    fn for_test(
+        profile: Option<&str>,
+        home: Option<&str>,
+        identities: &[(&str, &'static str)],
+    ) -> Self {
+        let mut context = Self {
+            exact_values: Vec::new(),
+            user_profile: profile.map(str::to_string),
+            home: home.map(str::to_string),
+        };
+        for (value, replacement) in identities {
+            context.add_identity((*value).to_string(), replacement);
+        }
+        context
+    }
 }
 
-fn sanitize_json_value(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::String(s) => {
-            *s = sanitize_string(s);
+fn last_path_component(path: &str) -> Option<String> {
+    path.trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    if needle.is_empty() || from > haystack.len() || !haystack.is_char_boundary(from) {
+        return None;
+    }
+    haystack[from..]
+        .to_ascii_lowercase()
+        .find(&needle.to_ascii_lowercase())
+        .map(|index| from + index)
+}
+
+fn replace_ascii_case_insensitive(input: &str, needle: &str, replacement: &str) -> String {
+    let mut result = input.to_string();
+    let mut from = 0;
+    while let Some(start) = find_ascii_case_insensitive(&result, needle, from) {
+        let end = start + needle.len();
+        result.replace_range(start..end, replacement);
+        from = start + replacement.len();
+    }
+    result
+}
+
+fn is_identity_char(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '_' | '-')
+}
+
+fn replace_bounded_ascii_case_insensitive(input: &str, needle: &str, replacement: &str) -> String {
+    let mut result = input.to_string();
+    let mut from = 0;
+    while let Some(start) = find_ascii_case_insensitive(&result, needle, from) {
+        let end = start + needle.len();
+        let before_is_identity = result[..start]
+            .chars()
+            .next_back()
+            .is_some_and(is_identity_char);
+        let after_is_identity = result[end..].chars().next().is_some_and(is_identity_char);
+        if !before_is_identity && !after_is_identity {
+            result.replace_range(start..end, replacement);
+            from = start + replacement.len();
+        } else {
+            from = end;
         }
-        serde_json::Value::Array(arr) => {
-            for item in arr.iter_mut() {
-                sanitize_json_value(item);
+    }
+    result
+}
+
+fn redact_user_directory_segments(input: &str) -> String {
+    let mut result = input.to_string();
+    for prefix in [
+        r"\\Users\\",
+        r"\Users\",
+        "/Users/",
+        "%5CUsers%5C",
+        "%2FUsers%2F",
+    ] {
+        let mut from = 0;
+        while let Some(prefix_start) = find_ascii_case_insensitive(&result, prefix, from) {
+            let segment_start = prefix_start + prefix.len();
+            let segment_end = result[segment_start..]
+                .char_indices()
+                .find_map(|(offset, character)| {
+                    let terminates = character == '\\'
+                        || character == '/'
+                        || character == '%'
+                        || character == '"'
+                        || character == '\''
+                        || character == '?'
+                        || character == '#'
+                        || character.is_whitespace();
+                    terminates.then_some(segment_start + offset)
+                })
+                .unwrap_or(result.len());
+            if segment_end == segment_start {
+                from = segment_start;
+                continue;
+            }
+            result.replace_range(segment_start..segment_end, "[OS_USERNAME]");
+            from = segment_start + "[OS_USERNAME]".len();
+        }
+    }
+    result
+}
+
+fn redact_bangumi_user_paths(input: &str) -> String {
+    let mut result = input.to_string();
+    for prefix in ["/users/", "/user/", "%2Fusers%2F", "%2Fuser%2F"] {
+        let mut from = 0;
+        while let Some(prefix_start) = find_ascii_case_insensitive(&result, prefix, from) {
+            let segment_start = prefix_start + prefix.len();
+            let segment_end = result[segment_start..]
+                .char_indices()
+                .find_map(|(offset, character)| {
+                    (character == '/'
+                        || character == '%'
+                        || character == '"'
+                        || character == '\''
+                        || character == '?'
+                        || character == '#'
+                        || character.is_whitespace())
+                    .then_some(segment_start + offset)
+                })
+                .unwrap_or(result.len());
+            if segment_end == segment_start {
+                from = segment_start;
+                continue;
+            }
+            result.replace_range(segment_start..segment_end, "[BANGUMI_USERNAME]");
+            from = segment_start + "[BANGUMI_USERNAME]".len();
+        }
+    }
+    result
+}
+
+fn redact_assigned_values(input: &str, key: &str) -> String {
+    let mut result = input.to_string();
+    let mut from = 0;
+
+    while let Some(key_start) = find_ascii_case_insensitive(&result, key, from) {
+        let key_end = key_start + key.len();
+        let before_valid = result[..key_start]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !is_identity_char(character));
+        if !before_valid {
+            from = key_end;
+            continue;
+        }
+
+        let mut cursor = key_end;
+        if result[cursor..].starts_with(['"', '\'']) {
+            cursor += 1;
+        }
+        while result[cursor..].starts_with(char::is_whitespace) {
+            cursor += result[cursor..].chars().next().unwrap().len_utf8();
+        }
+        let Some(separator) = result[cursor..].chars().next() else {
+            break;
+        };
+        if !matches!(separator, ':' | '=') {
+            from = key_end;
+            continue;
+        }
+        cursor += separator.len_utf8();
+        while result[cursor..].starts_with(char::is_whitespace) {
+            cursor += result[cursor..].chars().next().unwrap().len_utf8();
+        }
+
+        let quote = result[cursor..]
+            .chars()
+            .next()
+            .filter(|character| matches!(character, '"' | '\''));
+        if let Some(quote) = quote {
+            cursor += quote.len_utf8();
+        }
+        let value_start = cursor;
+        let value_end = result[value_start..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                let terminates = quote.map_or_else(
+                    || {
+                        character.is_whitespace()
+                            || matches!(character, '&' | ';' | ',' | '}' | ']')
+                    },
+                    |quote| character == quote,
+                );
+                terminates.then_some(value_start + offset)
+            })
+            .unwrap_or(result.len());
+
+        if value_end > value_start {
+            result.replace_range(value_start..value_end, REDACTED);
+            from = value_start + REDACTED.len();
+        } else {
+            from = key_end;
+        }
+    }
+    result
+}
+
+fn redact_bearer_tokens(input: &str) -> String {
+    let mut result = input.to_string();
+    let mut from = 0;
+    while let Some(start) = find_ascii_case_insensitive(&result, "Bearer ", from) {
+        let value_start = start + "Bearer ".len();
+        let value_end = result[value_start..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                (character.is_whitespace()
+                    || matches!(character, '"' | '\'' | ',' | ';' | '}' | ']'))
+                .then_some(value_start + offset)
+            })
+            .unwrap_or(result.len());
+        result.replace_range(value_start..value_end, REDACTED);
+        from = value_start + REDACTED.len();
+    }
+    result
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    SENSITIVE_KEYS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(key))
+}
+
+fn sanitize_json_value(value: &mut serde_json::Value, context: &SanitizationContext) {
+    match value {
+        serde_json::Value::String(string) => *string = context.sanitize(string),
+        serde_json::Value::Array(array) => {
+            for item in array {
+                sanitize_json_value(item, context);
             }
         }
         serde_json::Value::Object(map) => {
-            for (_, v) in map.iter_mut() {
-                sanitize_json_value(v);
+            for (key, value) in map {
+                if is_sensitive_key(key) {
+                    *value = serde_json::Value::String(REDACTED.to_string());
+                } else {
+                    sanitize_json_value(value, context);
+                }
             }
         }
         _ => {}
@@ -377,74 +631,18 @@ fn sanitize_json_value(value: &mut serde_json::Value) {
 
 // ── Main command ────────────────────────────────────────────
 
-/// Replace the user's Bangumi ID with [USER_ID] in a log line.
-/// Only replaces when the ID appears as a distinct token (path segment, JSON value, etc).
-fn redact_user_id(line: &str, user_id: Option<&str>) -> String {
-    let Some(id) = user_id else {
-        return line.to_string();
-    };
-    if id.is_empty() {
-        return line.to_string();
-    }
-
-    let mut result = line.to_string();
-
-    // /v0/users/{id}/ → /v0/users/[USER_ID]/
-    let pattern_path = format!("/users/{}/", id);
-    result = result.replace(&pattern_path, "/users/[USER_ID]/");
-
-    // /v0/users/{id} (end of string)
-    let pattern_path_end = format!("/users/{}", id);
-    if result.ends_with(&pattern_path_end) {
-        let new_end = result.trim_end_matches(id);
-        result = format!("{}[USER_ID]", new_end);
-    }
-
-    // "username":"{id}" → "username":"[USER_ID]"
-    let pattern_username = format!("\"username\":\"{}\"", id);
-    result = result.replace(&pattern_username, "\"username\":\"[USER_ID]\"");
-
-    // Standalone occurrences (surrounded by non-alphanumeric chars, not part of another number)
-    // This handles cases like: method=GET path=/v0/users/{id}/collections
-    // We already handled /users/{id}/ above, so standalone is a fallback.
-    // Only replace if bounded by non-digit chars to avoid partial number matches.
-    let id_len = id.len();
-    let mut final_result = String::with_capacity(result.len());
-    let chars: Vec<char> = result.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if i + id_len <= chars.len() {
-            let slice: String = chars[i..i + id_len].iter().collect();
-            if slice == id {
-                let before_digit = if i == 0 { true } else { !chars[i - 1].is_ascii_digit() };
-                let after_digit = if i + id_len >= chars.len() { true } else { !chars[i + id_len].is_ascii_digit() };
-                if before_digit && after_digit {
-                    final_result.push_str("[USER_ID]");
-                    i += id_len;
-                    continue;
-                }
-            }
-        }
-        final_result.push(chars[i]);
-        i += 1;
-    }
-    final_result
-}
-
 #[tauri::command]
 pub async fn export_diagnostics(
     app: tauri::AppHandle,
     frontend_errors: Option<Vec<String>>,
+    frontend_log_stats: Option<FrontendLogStats>,
 ) -> Result<String, String> {
     let config = app.config();
 
     // 1. Collect environment info
     let now = time::OffsetDateTime::now_utc();
-    let local_now = now
-        .to_offset(
-            time::UtcOffset::current_local_offset()
-                .unwrap_or(time::UtcOffset::UTC),
-        );
+    let local_now =
+        now.to_offset(time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC));
 
     let client_time = format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
@@ -461,7 +659,10 @@ pub async fn export_diagnostics(
             .product_name
             .clone()
             .unwrap_or_else(|| "SimpBangumi".to_string()),
-        app_version: config.version.clone().unwrap_or_else(|| "0.0.0".to_string()),
+        app_version: config
+            .version
+            .clone()
+            .unwrap_or_else(|| "0.0.0".to_string()),
         os_type: std::env::consts::OS.to_string(),
         os_version: get_os_version(),
         os_arch: get_os_arch(),
@@ -481,30 +682,73 @@ pub async fn export_diagnostics(
         tenrai_api: tenrai_result,
     };
 
-    // 3. Resolve sensitive user identifiers for redaction
-    let bangumi_user_id: Option<String> =
-        crate::auth::load_token().ok().flatten().and_then(|token| {
-            token.user.map(|u| u.id.to_string())
-        });
+    // 3. Capture auth health without exporting credentials or identity values.
+    let (stored_token, auth_storage_error) = match crate::auth::load_token() {
+        Ok(token) => (token, None),
+        Err(error) => (None, Some(error)),
+    };
+    let authentication = AuthenticationInfo {
+        storage_status: if auth_storage_error.is_some() {
+            "error"
+        } else if stored_token.is_some() {
+            "loaded"
+        } else {
+            "empty"
+        },
+        source: stored_token.as_ref().map(|token| match token.source {
+            crate::auth::TokenSource::PersonalAccessToken => "personal_access_token",
+            crate::auth::TokenSource::OAuth => "oauth",
+        }),
+        expires_at: stored_token.as_ref().and_then(|token| token.expires_at),
+        user_profile_available: stored_token
+            .as_ref()
+            .is_some_and(|token| token.user.is_some()),
+        storage_error: auth_storage_error,
+    };
+    let current_user = stored_token.as_ref().and_then(|token| token.user.as_ref());
+    let sanitization = SanitizationContext::new(current_user);
 
-    // 4. Collect and sanitize backend logs
-    let raw_backend_logs = crate::take_rust_logs();
+    // 4. Snapshot logs without clearing the buffer so repeated exports preserve context.
+    let (raw_backend_logs, backend_dropped) = crate::snapshot_rust_logs();
     let sanitized_backend_logs: Vec<String> = raw_backend_logs
         .into_iter()
-        .map(|line| sanitize_string(&line))
-        .map(|line| redact_user_id(&line, bangumi_user_id.as_deref()))
+        .map(|line| sanitization.sanitize(&line))
         .collect();
 
-    // 5. Sanitize frontend logs (captured console.log/info/warn/error + unhandled rejections)
+    // 5. Sanitize frontend logs (console output, window errors and unhandled rejections).
     let sanitized_frontend_logs: Option<Vec<String>> = frontend_errors.map(|logs| {
         logs.into_iter()
-            .map(|line| sanitize_string(&line))
-            .map(|line| redact_user_id(&line, bangumi_user_id.as_deref()))
+            .map(|line| sanitization.sanitize(&line))
             .collect()
     });
 
+    let frontend_retained = sanitized_frontend_logs.as_ref().map_or(0, Vec::len);
+    let frontend_dropped = frontend_log_stats.as_ref().map_or(0, |stats| stats.dropped);
+    let frontend_count_consistent = frontend_log_stats
+        .as_ref()
+        .is_none_or(|stats| stats.retained == frontend_retained);
+    let frontend_capacity = frontend_log_stats
+        .as_ref()
+        .map_or(500, |stats| stats.capacity.max(1));
+    let log_summary = LogSummary {
+        backend: LogStats {
+            retained: sanitized_backend_logs.len(),
+            dropped: backend_dropped,
+            capacity: crate::MAX_RUST_LOGS,
+            truncated: backend_dropped > 0,
+            count_consistent: true,
+        },
+        frontend: LogStats {
+            retained: frontend_retained,
+            dropped: frontend_dropped,
+            capacity: frontend_capacity,
+            truncated: frontend_dropped > 0,
+            count_consistent: frontend_count_consistent,
+        },
+    };
     // 6. Build report
     let report = DiagnosticReport {
+        schema_version: 2,
         generated_at: format!(
             "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
             now.year(),
@@ -515,10 +759,12 @@ pub async fn export_diagnostics(
             now.second(),
         ),
         environment,
+        authentication,
         network,
+        log_summary,
         backend_logs: sanitized_backend_logs,
         frontend_logs: sanitized_frontend_logs,
-        sanitization_note: "Sensitive data (tokens, user paths, authorization headers, user IDs) have been automatically redacted. Values containing access_token, refresh_token, Authorization headers, Bearer tokens, chii_auth/sid, Windows user profile paths, and Bangumi user IDs are replaced with [REDACTED] or [USER_ID]. Frontend logs include ALL console output (log/info/warn/error) and unhandled rejections. Backend logs include all Rust eprintln output since app start.".to_string(),
+        sanitization_note: "Secrets, authorization data, persistent device identifiers, OS user paths, and Bangumi user identity fields are automatically redacted. Log summary fields report retained and dropped entries so truncation is visible.".to_string(),
         disclaimer: "诊断信息用于排查软件运行异常。请不要将包含敏感信息的日志公开上传到公共讨论区。".to_string(),
     };
 
@@ -527,7 +773,7 @@ pub async fn export_diagnostics(
         .map_err(|e| format!("Failed to serialize diagnostic report: {e}"))?;
 
     // Double-check sanitization on final JSON
-    sanitize_json_value(&mut json_value);
+    sanitize_json_value(&mut json_value, &sanitization);
 
     let json_str = serde_json::to_string_pretty(&json_value)
         .map_err(|e| format!("Failed to format diagnostic report: {e}"))?;
@@ -539,8 +785,7 @@ pub async fn export_diagnostics(
         .map_err(|e| format!("无法获取应用数据目录: {e}"))?;
 
     let diagnostics_dir = app_data_dir.join("diagnostics");
-    std::fs::create_dir_all(&diagnostics_dir)
-        .map_err(|e| format!("无法创建诊断目录: {e}"))?;
+    std::fs::create_dir_all(&diagnostics_dir).map_err(|e| format!("无法创建诊断目录: {e}"))?;
 
     let timestamp = format!(
         "{}{:02}{:02}_{:02}{:02}{:02}",
@@ -555,8 +800,7 @@ pub async fn export_diagnostics(
     let file_name = format!("diagnostics_{}.json", timestamp);
     let file_path = diagnostics_dir.join(&file_name);
 
-    std::fs::write(&file_path, &json_str)
-        .map_err(|e| format!("无法写入诊断文件: {e}"))?;
+    std::fs::write(&file_path, &json_str).map_err(|e| format!("无法写入诊断文件: {e}"))?;
 
     crate::log_info(&format!("Diagnostics exported to: {}", file_path.display()));
 
@@ -564,4 +808,91 @@ pub async fn export_diagnostics(
         .to_str()
         .ok_or_else(|| "路径包含非 UTF-8 字符".to_string())?
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_os_username_from_path_variants() {
+        let context = SanitizationContext::for_test(
+            Some(r"C:\Users\Alice"),
+            Some("/home/Alice"),
+            &[("Alice", "[OS_USERNAME]")],
+        );
+        let samples = [
+            r"C:\Users\Alice\AppData\Local\app.log",
+            r#"{"path":"C:\\Users\\Alice\\app.log"}"#,
+            "C:/Users/Alice/app.log",
+            "%5CUsers%5CAlice%5Capp.log",
+            "%2FUsers%2FAlice%2Fapp.log",
+            "/home/Alice/.config/app.log",
+        ];
+
+        for sample in samples {
+            let sanitized = context.sanitize(sample);
+            assert!(
+                !sanitized.to_ascii_lowercase().contains("alice"),
+                "{sanitized}"
+            );
+        }
+    }
+
+    #[test]
+    fn redacts_bangumi_identity_in_fields_and_paths() {
+        let context = SanitizationContext::for_test(
+            None,
+            None,
+            &[
+                ("alice", "[BANGUMI_USERNAME]"),
+                ("12345", "[BANGUMI_USER_ID]"),
+                ("Alice Display", "[BANGUMI_NICKNAME]"),
+            ],
+        );
+        let input = r#"username=alice nickname="Alice Display" path=/v0/users/alice/collections user_id=12345 unrelated=aliceblue"#;
+        let sanitized = context.sanitize(input);
+
+        assert!(sanitized.contains("username=[REDACTED]"));
+        assert!(sanitized.contains("nickname=\"[REDACTED]\""));
+        assert!(sanitized.contains("/users/[BANGUMI_USERNAME]/collections"));
+        assert!(sanitized.contains("user_id=[REDACTED]"));
+        assert!(sanitized.contains("unrelated=aliceblue"));
+    }
+
+    #[test]
+    fn redacts_sensitive_values_across_log_formats() {
+        let context = SanitizationContext::for_test(None, None, &[]);
+        let input = r#"{"access_token":"json-secret"} refresh_token=query-secret&next=1 chii_auth=cookie-secret; Authorization: Bearer header-secret device_id=device-secret"#;
+        let sanitized = context.sanitize(input);
+
+        for secret in [
+            "json-secret",
+            "query-secret",
+            "cookie-secret",
+            "header-secret",
+            "device-secret",
+        ] {
+            assert!(!sanitized.contains(secret), "{sanitized}");
+        }
+        assert!(sanitized.matches(REDACTED).count() >= 5, "{sanitized}");
+    }
+
+    #[test]
+    fn final_json_pass_redacts_sensitive_keys_and_embedded_strings() {
+        let context = SanitizationContext::for_test(
+            Some(r"C:\Users\Alice"),
+            None,
+            &[("alice", "[BANGUMI_USERNAME]")],
+        );
+        let mut value = serde_json::json!({
+            "access_token": "top-secret",
+            "details": ["username=alice", r"C:\Users\Alice\app.log"]
+        });
+
+        sanitize_json_value(&mut value, &context);
+        let serialized = serde_json::to_string(&value).unwrap();
+        assert!(!serialized.contains("top-secret"));
+        assert!(!serialized.to_ascii_lowercase().contains("alice"));
+    }
 }

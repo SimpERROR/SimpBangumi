@@ -1,6 +1,9 @@
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL, Engine as _};
+use ring::digest::{digest, SHA256};
+use ring::signature::{Ed25519KeyPair, KeyPair};
+use rand::RngCore;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -15,10 +18,12 @@ use crate::bangumi::{BangumiClient, BangumiUser};
 
 const KEYRING_SERVICE: &str = "bangumi-client";
 const KEYRING_ACCOUNT: &str = "bangumi-token";
+const KEYRING_DEVICE_ACCOUNT: &str = "bangumi-worker-device";
 const KEYRING_WEB_COOKIE_ACCOUNT: &str = "bangumi-web-cookie";
 const SESSION_CACHE_DIR: &str = "bangumi-client";
 const SESSION_CACHE_FILE: &str = "auth-session.json";
 const WEB_COOKIE_CACHE_FILE: &str = "web-cookie.enc";
+const DEVICE_KEY_CACHE_FILE: &str = "worker-device-key.enc";
 const ENCRYPTED_FILE_PREFIX: &str = "dpapi:v1:";
 const AUTH_BASE_URL: &str = "https://bgm.tv";
 const WORKER_PROXY_URL: &str = "https://simpbangumiproxy.pulsebeatrhythm.top";
@@ -26,17 +31,19 @@ const OAUTH_CLIENT_ID: &str = "bgm64976a469e533c132";
 const OAUTH_REDIRECT_URI: &str = "http://127.0.0.1:46231/oauth/callback";
 const OAUTH_SCOPE: Option<&str> = None;
 const OAUTH_TIMEOUT_SECONDS: u64 = 180;
+const WORKER_SIGNATURE_VERSION: &str = "v2";
 
-static OAUTH_LOGIN_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<Result<String, String>>>>> =
+static OAUTH_LOGIN_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<Result<OAuthCallbackResult, String>>>>> =
     OnceLock::new();
 static WEB_COOKIE_CACHE: OnceLock<Mutex<Option<StoredWebCookie>>> = OnceLock::new();
+static OAUTH_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn log_info(message: &str) {
-    eprintln!("[auth] {message}");
+    crate::log_info(&format!("[auth] {message}"));
 }
 
 fn log_error(message: &str) {
-    eprintln!("[auth][error] {message}");
+    crate::log_error(&format!("[auth] {message}"));
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -349,6 +356,7 @@ pub struct OAuthStartLoginRequest {
 pub struct OAuthLoginStatus {
     pub completed: bool,
     pub code: Option<String>,
+    pub code_verifier: Option<String>,
     pub error: Option<String>,
 }
 
@@ -360,14 +368,39 @@ pub struct WorkerOAuthTokenRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkerExchangeCodeRequest {
+    pub grant_type: String,
     pub code: String,
     pub redirect_uri: String,
+    pub code_verifier: String,
+    auth: Option<WorkerRequestAuth>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkerRefreshTokenRequest {
     pub refresh_token: String,
     pub grant_type: String,
+    auth: Option<WorkerRequestAuth>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredDeviceKey {
+    device_id: String,
+    secret_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkerRequestAuth {
+    device_id: String,
+    device_public_key: String,
+    timestamp: i64,
+    nonce: String,
+    signature: String,
+}
+
+#[derive(Debug)]
+struct OAuthCallbackResult {
+    code: String,
+    code_verifier: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -665,7 +698,7 @@ pub fn load_oauth_client_config() -> Result<OAuthClientConfig, String> {
     })
 }
 
-pub fn start_oauth_login(state: Option<String>) -> Result<OAuthAuthorizeUrl, String> {
+pub fn start_oauth_login(_state: Option<String>) -> Result<OAuthAuthorizeUrl, String> {
     log_info("starting OAuth login flow");
     let config = load_oauth_client_config()?;
     let receiver_store = OAUTH_LOGIN_RECEIVER.get_or_init(|| Mutex::new(None));
@@ -677,12 +710,15 @@ pub fn start_oauth_login(state: Option<String>) -> Result<OAuthAuthorizeUrl, Str
         return Err("OAuth login already in progress".to_string());
     }
 
-    let authorize_url = build_oauth_authorize_url(&config, state)?;
-    let (tx, rx) = mpsc::channel::<Result<String, String>>();
+    let state = generate_oauth_state()?;
+    let code_verifier = generate_pkce_verifier()?;
+    let code_challenge = pkce_code_challenge(&code_verifier);
+    let authorize_url = build_oauth_authorize_url(&config, &state, &code_challenge)?;
+    let (tx, rx) = mpsc::channel::<Result<OAuthCallbackResult, String>>();
     *guard = Some(rx);
 
     std::thread::spawn(move || {
-        let result = wait_for_callback_and_capture_code(config);
+        let result = wait_for_callback_and_capture_code(config, state, code_verifier);
         let _ = tx.send(result);
     });
 
@@ -702,11 +738,12 @@ pub fn wait_oauth_login_result() -> Result<OAuthLoginStatus, String> {
         Ok(result) => {
             *guard = None;
             match result {
-                Ok(code) => {
+                Ok(callback) => {
                     log_info("OAuth callback code received");
                     Ok(OAuthLoginStatus {
                         completed: true,
-                        code: Some(code),
+                        code: Some(callback.code),
+                        code_verifier: Some(callback.code_verifier),
                         error: None,
                     })
                 }
@@ -715,6 +752,7 @@ pub fn wait_oauth_login_result() -> Result<OAuthLoginStatus, String> {
                     Ok(OAuthLoginStatus {
                         completed: true,
                         code: None,
+                        code_verifier: None,
                         error: Some(error),
                     })
                 }
@@ -723,6 +761,7 @@ pub fn wait_oauth_login_result() -> Result<OAuthLoginStatus, String> {
         Err(TryRecvError::Empty) => Ok(OAuthLoginStatus {
             completed: false,
             code: None,
+            code_verifier: None,
             error: None,
         }),
         Err(TryRecvError::Disconnected) => {
@@ -731,13 +770,18 @@ pub fn wait_oauth_login_result() -> Result<OAuthLoginStatus, String> {
             Ok(OAuthLoginStatus {
                 completed: true,
                 code: None,
+                code_verifier: None,
                 error: Some("OAuth login worker disconnected".to_string()),
             })
         }
     }
 }
 
-fn wait_for_callback_and_capture_code(config: OAuthClientConfig) -> Result<String, String> {
+fn wait_for_callback_and_capture_code(
+    config: OAuthClientConfig,
+    expected_state: String,
+    code_verifier: String,
+) -> Result<OAuthCallbackResult, String> {
     let redirect = Url::parse(&config.redirect_uri)
         .map_err(|err| format!("Invalid OAuth redirect URI: {err}"))?;
 
@@ -799,15 +843,26 @@ fn wait_for_callback_and_capture_code(config: OAuthClientConfig) -> Result<Strin
                     continue;
                 }
 
-                let state_theme = callback_url
+                let callback_state = callback_url
                     .query_pairs()
                     .find_map(|(key, value)| {
                         if key == "state" {
-                            parse_theme_state(value.as_ref())
+                            Some(value.into_owned())
                         } else {
                             None
                         }
                     });
+
+                if callback_state.as_deref() != Some(expected_state.as_str()) {
+                    write_callback_response(
+                        &mut stream,
+                        false,
+                        "OAuth state validation failed",
+                        None,
+                    );
+                    log_error("rejected OAuth callback with mismatched state");
+                    continue;
+                }
 
                 let code = match callback_url
                     .query_pairs()
@@ -819,7 +874,7 @@ fn wait_for_callback_and_capture_code(config: OAuthClientConfig) -> Result<Strin
                             &mut stream,
                             false,
                             "授权回调缺少 code 参数，请返回应用重试。",
-                            state_theme,
+                            None,
                         );
                         return Err("OAuth callback missing code".to_string());
                     }
@@ -829,11 +884,11 @@ fn wait_for_callback_and_capture_code(config: OAuthClientConfig) -> Result<Strin
                     &mut stream,
                     true,
                     "Bangumi 授权完成，此页面可直接关闭。登录流程尚未完成。",
-                    state_theme,
+                    None,
                 );
                 log_info("OAuth callback handled successfully");
 
-                return Ok(code);
+                return Ok(OAuthCallbackResult { code, code_verifier });
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(150));
@@ -843,17 +898,6 @@ fn wait_for_callback_and_capture_code(config: OAuthClientConfig) -> Result<Strin
             }
         }
     }
-}
-
-fn parse_theme_state(state: &str) -> Option<&'static str> {
-        let normalized = state.trim().to_ascii_lowercase();
-        if normalized == "dark" {
-                Some("dark")
-        } else if normalized == "light" {
-                Some("light")
-        } else {
-                None
-        }
 }
 
 fn escape_html(input: &str) -> String {
@@ -1049,7 +1093,8 @@ fn write_callback_response(
 
 pub fn build_oauth_authorize_url(
         config: &OAuthClientConfig,
-        state: Option<String>,
+        state: &str,
+        code_challenge: &str,
 ) -> Result<OAuthAuthorizeUrl, String> {
     let mut url = Url::parse(&format!("{AUTH_BASE_URL}/oauth/authorize"))
         .map_err(|err| format!("Failed to build OAuth authorize URL: {err}"))?;
@@ -1065,14 +1110,35 @@ pub fn build_oauth_authorize_url(
             query.append_pair("scope", scope);
         }
 
-        if let Some(state_value) = state.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-            query.append_pair("state", state_value);
-        }
+        query
+            .append_pair("state", state)
+            .append_pair("code_challenge", code_challenge)
+            .append_pair("code_challenge_method", "S256");
     }
 
     Ok(OAuthAuthorizeUrl {
         url: url.to_string(),
     })
+}
+
+fn generate_pkce_verifier() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut bytes)
+        .map_err(|error| format!("Failed to generate PKCE verifier: {error}"))?;
+    Ok(BASE64_URL.encode(bytes))
+}
+
+fn pkce_code_challenge(verifier: &str) -> String {
+    BASE64_URL.encode(digest(&SHA256, verifier.as_bytes()).as_ref())
+}
+
+fn generate_oauth_state() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut bytes)
+        .map_err(|error| format!("Failed to generate OAuth state: {error}"))?;
+    Ok(BASE64_STANDARD.encode(bytes))
 }
 
 pub async fn login_with_personal_access_token(token: String) -> Result<AuthSession, String> {
@@ -1116,10 +1182,16 @@ pub async fn login_with_worker_token(req: WorkerOAuthTokenRequest) -> Result<Aut
     Ok(session_from_token(Some(stored)))
 }
 
-pub async fn refresh_saved_oauth_session() -> Result<AuthSession, String> {
+pub async fn refresh_saved_oauth_session_if_current(failed_access_token: Option<&str>) -> Result<AuthSession, String> {
     log_info("refreshing saved OAuth session");
+    let _refresh_guard = OAUTH_REFRESH_LOCK.lock().await;
     let stored = load_token()?
         .ok_or_else(|| "No stored Bangumi session".to_string())?;
+
+    if failed_access_token.is_some_and(|failed| failed != stored.access_token) {
+        log_info("OAuth session was already refreshed by another request");
+        return Ok(session_from_token(Some(stored)));
+    }
 
     if !matches!(stored.source, TokenSource::OAuth) {
         return Err("Stored session is not an OAuth session".to_string());
@@ -1133,6 +1205,7 @@ pub async fn refresh_saved_oauth_session() -> Result<AuthSession, String> {
     let refreshed = refresh_token_via_worker(WorkerRefreshTokenRequest {
         refresh_token: refresh_token.clone(),
         grant_type: "refresh_token".to_string(),
+        auth: None,
     })
     .await?;
 
@@ -1152,6 +1225,144 @@ pub fn is_auth_error(error: &str) -> bool {
     error.contains("401") || error.contains("403")
 }
 
+fn load_or_create_device_key() -> Result<StoredDeviceKey, String> {
+    let entry = Entry::new(KEYRING_SERVICE, KEYRING_DEVICE_ACCOUNT);
+    match entry {
+        Ok(entry) => match entry.get_password() {
+            Ok(raw) => {
+                let stored = parse_stored_device_key(&raw)?;
+                log_info(&format!("device key loaded source=keyring device_id={}", stored.device_id));
+                if let Err(error) = save_device_key_to_file(&stored) {
+                    log_error(&format!("failed to refresh encrypted device key fallback: {error}"));
+                }
+                Ok(stored)
+            }
+            Err(keyring::Error::NoEntry) => {
+                if let Some(stored) = load_device_key_from_file()? {
+                    if let Err(error) = entry.set_password(&serialize_device_key(&stored)?) {
+                        log_error(&format!("failed to restore device key to keyring: {error}"));
+                    }
+                    log_info(&format!("device key loaded source=encrypted-file-fallback device_id={}", stored.device_id));
+                return Ok(stored);
+                }
+                create_and_store_device_key(&entry)
+            }
+            Err(error) => {
+                if let Some(stored) = load_device_key_from_file()? {
+                    log_error(&format!("device keyring unavailable, using encrypted fallback: {error}"));
+                    log_info(&format!("device key loaded source=encrypted-file-fallback device_id={}", stored.device_id));
+                return Ok(stored);
+                }
+                Err(format!("Device keyring unavailable and no encrypted fallback exists: {error}"))
+            }
+        },
+        Err(error) => {
+            if let Some(stored) = load_device_key_from_file()? {
+                log_error(&format!("device keyring unavailable, using encrypted fallback: {error}"));
+                log_info(&format!("device key loaded source=encrypted-file-fallback device_id={}", stored.device_id));
+                return Ok(stored);
+            }
+            Err(format!("Device keyring unavailable and no encrypted fallback exists: {error}"))
+        }
+    }
+}
+
+fn create_and_store_device_key(entry: &Entry) -> Result<StoredDeviceKey, String> {
+    let mut secret = [0u8; 32];
+    rand::rngs::OsRng.try_fill_bytes(&mut secret).map_err(|e| e.to_string())?;
+    Ed25519KeyPair::from_seed_unchecked(&secret)
+        .map_err(|e| format!("Failed to create device key: {e}"))?;
+    let stored = StoredDeviceKey {
+        device_id: BASE64_URL.encode(&secret[..16]),
+        secret_key: BASE64_URL.encode(secret),
+    };
+    let serialized = serialize_device_key(&stored)?;
+    if let Err(error) = entry.set_password(&serialized) {
+        save_device_key_to_file(&stored).map_err(|fallback| {
+            format!("Failed to save device key to keyring: {error}; encrypted fallback also failed: {fallback}")
+        })?;
+    } else if let Err(error) = save_device_key_to_file(&stored) {
+        log_error(&format!("failed to save encrypted device key fallback: {error}"));
+    }
+    log_info(&format!("device key loaded source=newly-created device_id={}", stored.device_id));
+    Ok(stored)
+}
+
+fn serialize_device_key(key: &StoredDeviceKey) -> Result<String, String> {
+    serde_json::to_string(key).map_err(|error| format!("Failed to serialize device key: {error}"))
+}
+
+fn parse_stored_device_key(raw: &str) -> Result<StoredDeviceKey, String> {
+    let stored = serde_json::from_str::<StoredDeviceKey>(raw)
+        .map_err(|error| format!("Invalid stored device key: {error}"))?;
+    let secret = BASE64_URL
+        .decode(&stored.secret_key)
+        .map_err(|error| format!("Invalid stored device key secret: {error}"))?;
+    let secret: [u8; 32] = secret
+        .try_into()
+        .map_err(|_| "Invalid stored device key secret length".to_string())?;
+    Ed25519KeyPair::from_seed_unchecked(&secret)
+        .map_err(|error| format!("Invalid stored device key secret: {error}"))?;
+    let expected_device_id = BASE64_URL.encode(&secret[..16]);
+    if stored.device_id != expected_device_id {
+        return Err("Stored device key is inconsistent: device_id does not match secret_key".to_string());
+    }
+    Ok(stored)
+}
+
+fn load_device_key_from_file() -> Result<Option<StoredDeviceKey>, String> {
+    let path = device_key_cache_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read encrypted device key fallback: {error}"))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if !trimmed.starts_with(ENCRYPTED_FILE_PREFIX) {
+        return Err("Unsupported encrypted device key fallback format".to_string());
+    }
+    let encrypted = BASE64_STANDARD
+        .decode(&trimmed[ENCRYPTED_FILE_PREFIX.len()..])
+        .map_err(|error| format!("Failed to decode encrypted device key fallback: {error}"))?;
+    let decrypted = decrypt_local_secret_bytes(&encrypted)?;
+    let raw = String::from_utf8(decrypted)
+        .map_err(|error| format!("Invalid encrypted device key fallback text: {error}"))?;
+    parse_stored_device_key(&raw).map(Some)
+}
+
+fn save_device_key_to_file(key: &StoredDeviceKey) -> Result<(), String> {
+    let path = device_key_cache_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create device key fallback directory: {error}"))?;
+    }
+    let serialized = serialize_device_key(key)?;
+    let encrypted = encrypt_local_secret_bytes(serialized.as_bytes())?;
+    let encoded = format!("{ENCRYPTED_FILE_PREFIX}{}", BASE64_STANDARD.encode(encrypted));
+    fs::write(&path, encoded)
+        .map_err(|error| format!("Failed to write encrypted device key fallback: {error}"))
+}
+fn worker_auth(key: &StoredDeviceKey, grant_type: &str, value: &str, binding: Option<&str>) -> Result<WorkerRequestAuth, String> {
+    let secret = BASE64_URL.decode(&key.secret_key).map_err(|e| format!("Invalid device key: {e}"))?;
+    let secret: [u8; 32] = secret.try_into().map_err(|_| "Invalid device key length".to_string())?;
+    let signing = Ed25519KeyPair::from_seed_unchecked(&secret).map_err(|e| format!("Invalid device key: {e}"))?;
+    let mut nonce_bytes = [0u8; 24];
+    rand::rngs::OsRng.try_fill_bytes(&mut nonce_bytes).map_err(|e| e.to_string())?;
+    let nonce = BASE64_URL.encode(nonce_bytes);
+    let timestamp = time::OffsetDateTime::now_utc().unix_timestamp();
+    let message_value = binding.map(|extra| format!("{value}.{extra}")).unwrap_or_else(|| value.to_string());
+    let message = format!(
+        "{WORKER_SIGNATURE_VERSION}.{grant_type}.{}.{}.{}.{}",
+        key.device_id, timestamp, nonce, message_value
+    );
+    let device_public_key = BASE64_URL.encode(signing.public_key().as_ref());
+    let signature = BASE64_URL.encode(signing.sign(message.as_bytes()).as_ref());
+    log_info(&format!("device request signed version={WORKER_SIGNATURE_VERSION} grant_type={grant_type} device_id={} public_key_len={} timestamp={} nonce_prefix={} message_len={} value_len={} binding_present={}", key.device_id, device_public_key.len(), timestamp, &nonce[..8.min(nonce.len())], message.len(), value.len(), binding.is_some()));
+    Ok(WorkerRequestAuth { device_id: key.device_id.clone(), device_public_key, timestamp, nonce, signature })
+}
 pub async fn exchange_code_via_worker(
     req: WorkerExchangeCodeRequest,
 ) -> Result<WorkerExchangeTokenResponse, String> {
@@ -1164,6 +1375,10 @@ pub async fn exchange_code_via_worker(
         .build()
         .map_err(|err| format!("Failed to build worker HTTP client: {err}"))?;
 
+    let mut req = req;
+    let device_key = load_or_create_device_key()?;
+    req.auth = Some(worker_auth(&device_key, "authorization_code", &req.code, Some(&req.code_verifier))?);
+    log_info(&format!("posting authorization-code request worker_url={} device_id={} code_len={} code_verifier_len={}", WORKER_PROXY_URL, device_key.device_id, req.code.len(), req.code_verifier.len()));
     let response = http
         .post(WORKER_PROXY_URL)
         .json(&req)
@@ -1186,6 +1401,10 @@ pub async fn refresh_token_via_worker(
         .build()
         .map_err(|err| format!("Failed to build worker HTTP client: {err}"))?;
 
+    let mut req = req;
+    let device_key = load_or_create_device_key()?;
+    req.auth = Some(worker_auth(&device_key, "refresh_token", &req.refresh_token, None)?);
+    log_info(&format!("posting refresh-token request worker_url={} device_id={} refresh_token_len={}", WORKER_PROXY_URL, device_key.device_id, req.refresh_token.len()));
     let response = http
         .post(WORKER_PROXY_URL)
         .json(&req)
@@ -1301,4 +1520,34 @@ fn web_cookie_cache_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "Failed to resolve web cookie cache directory".to_string())?;
 
     Ok(base_dir.join(SESSION_CACHE_DIR).join(WEB_COOKIE_CACHE_FILE))
+}
+
+
+fn device_key_cache_path() -> Result<PathBuf, String> {
+    let base_dir = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .ok_or_else(|| "Failed to resolve device key fallback directory".to_string())?;
+
+    Ok(base_dir.join(SESSION_CACHE_DIR).join(DEVICE_KEY_CACHE_FILE))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pkce_s256_matches_rfc7636_vector() {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        assert_eq!(
+            pkce_code_challenge(verifier),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        );
+    }
+
+    #[test]
+    fn generated_pkce_verifier_is_valid_length_and_charset() {
+        let verifier = generate_pkce_verifier().expect("verifier generation");
+        assert_eq!(verifier.len(), 43);
+        assert!(verifier.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte)));
+    }
 }

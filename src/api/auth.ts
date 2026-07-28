@@ -14,11 +14,14 @@ interface RefreshTokenRequest {
 export async function exchangeCodeForToken(
   code: string,
   redirect_uri: string,
+  code_verifier: string,
 ): Promise<WorkerExchangeTokenResponse> {
   return invoke<WorkerExchangeTokenResponse>("bangumi_worker_exchange_code", {
     request: {
+      grant_type: "authorization_code",
       code,
       redirect_uri,
+      code_verifier,
     },
   });
 }

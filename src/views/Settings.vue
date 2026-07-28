@@ -7,8 +7,9 @@ import AboutSettings from "./settings/AboutSettings.vue";
 import WebLoginSettings from "./settings/WebLoginSettings.vue";
 import BroadcastSettings from "./settings/BroadcastSettings.vue";
 import UpdateSettings from "./settings/UpdateSettings.vue";
+import LegalComplianceSettings from "./settings/LegalComplianceSettings.vue";
 
-type SettingsPage = "home" | "display" | "web-login" | "broadcast" | "update" | "about" | "developer";
+type SettingsPage = "home" | "display" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance";
 
 const activePage = ref<SettingsPage>("home");
 
@@ -33,6 +34,10 @@ const pageTitle = computed(() => {
     return "更新选项";
   }
 
+  if (activePage.value === "legal-compliance") {
+    return "法律与合规";
+  }
+
   if (activePage.value === "developer") {
     return "开发者选项";
   }
@@ -40,17 +45,23 @@ const pageTitle = computed(() => {
   return "设置";
 });
 
-function openPage(page: "display" | "web-login" | "broadcast" | "update" | "about" | "developer") {
+function openPage(page: "display" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance") {
   activePage.value = page;
 }
 
 function goHome() {
   activePage.value = "home";
 }
+
+defineExpose({
+  openWebLogin: () => openPage("web-login"),
+});
 </script>
 
 <template>
   <section class="settings-shell">
+    <Transition name="settings-page-switch" mode="out-in">
+      <div :key="activePage" class="settings-page-stage">
     <div v-if="activePage !== 'home'" class="settings-breadcrumb">
       <button class="secondary-button" type="button" @click="goHome">
         返回设置
@@ -64,6 +75,9 @@ function goHome() {
     <BroadcastSettings v-else-if="activePage === 'broadcast'" />
     <UpdateSettings v-else-if="activePage === 'update'" />
     <DeveloperSettings v-else-if="activePage === 'developer'" />
+    <LegalComplianceSettings v-else-if="activePage === 'legal-compliance'" />
     <AboutSettings v-else />
+      </div>
+    </Transition>
   </section>
 </template>

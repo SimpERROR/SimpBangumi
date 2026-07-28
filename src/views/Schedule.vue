@@ -159,7 +159,7 @@ defineExpose({ refresh });
     </p>
 
     <!-- Subject list -->
-    <section v-else class="schedule__list">
+    <TransitionGroup v-else name="item-reveal" tag="section" class="schedule__list">
       <button
         v-for="item in selectedDaySubjects"
         :key="item.id"
@@ -196,6 +196,6 @@ defineExpose({ refresh });
           </p>
         </div>
       </button>
-    </section>
+    </TransitionGroup>
   </section>
 </template>

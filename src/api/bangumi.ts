@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { waitForAuthReady } from "./authRequestGate";
 
 export type TokenSource = "personal_access_token" | "oauth";
 
@@ -25,6 +26,7 @@ export interface OAuthExchangeCodeRequest {
 export interface OAuthLoginStatus {
   completed: boolean;
   code?: string | null;
+  code_verifier?: string | null;
   error?: string | null;
 }
 
@@ -413,7 +415,8 @@ export class BangumiApiClient {
     return invoke<OAuthLoginStatus>("bangumi_oauth_wait_login_result");
   }
 
-  getMe(): Promise<BangumiUser> {
+  async getMe(): Promise<BangumiUser> {
+    await waitForAuthReady();
     return invoke<BangumiUser>("bangumi_get_me");
   }
 
@@ -660,12 +663,13 @@ export class BangumiApiClient {
     return this.request<T>("GET", path, query);
   }
 
-  request<T = unknown>(
+  async request<T = unknown>(
     method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
     path: string,
     query?: Record<string, string>,
     body?: unknown,
   ): Promise<T> {
+    await waitForAuthReady();
     return invoke<T>("bangumi_api_request", {
       method,
       path,

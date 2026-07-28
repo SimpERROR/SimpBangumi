@@ -5,14 +5,14 @@ import cfLogo from "../assets/cf/CF-Logo 1.png";
 <template>
   <Teleport to="body">
     <Transition name="workers-modal">
-      <div class="workers-overlay">
+      <div class="workers-overlay" role="dialog" aria-modal="true" aria-live="polite">
         <div class="workers-modal">
           <img
             :src="cfLogo"
             alt="Cloudflare"
             class="workers-modal__logo"
           />
-          <p class="workers-modal__text">正在与 Workers 通信以完成登录。</p>
+          <p class="workers-modal__text">正在与 Workers 安全通信</p>
         </div>
       </div>
     </Transition>
@@ -21,6 +21,8 @@ import cfLogo from "../assets/cf/CF-Logo 1.png";
 
 <style scoped>
 .workers-overlay {
+  overflow: hidden;
+  overscroll-behavior: contain;
   position: fixed;
   inset: 0;
   z-index: 9999;

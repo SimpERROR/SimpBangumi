@@ -173,6 +173,7 @@ const collapsed = ref(false);
 const modelLoading = ref(false);
 const modelLoadError = ref("");
 const rendering = ref(false);
+let pendingModelUrl: string | null = null;
 const internalVisible = ref(props.visible);
 const containerHovered = ref(false);
 
@@ -301,6 +302,7 @@ const targetScale = ref(0.5);
 const modelPosX = ref(0);
 const modelPosY = ref(0);
 const isDragging = ref(false);
+const hasPointerDown = ref(false);
 const dragStart = ref({ x: 0, y: 0, mx: 0, my: 0 });
 
 // 保存模型的原始尺寸（scale=1 时），用于重置位置计算
@@ -417,6 +419,7 @@ function animateZoom() {
 }
 
 function onStageWheel(event: WheelEvent) {
+  if (appStore.live2dOperationLocked.value) return;
   event.preventDefault();
   const delta = event.deltaY > 0 ? -0.03 : 0.03;
   targetScale.value = Math.max(0.15, Math.min(2.5, targetScale.value + delta));
@@ -427,7 +430,8 @@ function onStageWheel(event: WheelEvent) {
 const CLICK_THRESHOLD = 5; // px，超过此距离视为拖拽而非点击
 
 function onStagePointerDown(event: PointerEvent) {
-  isDragging.value = true;
+  hasPointerDown.value = true;
+  isDragging.value = !appStore.live2dOperationLocked.value;
   dragStart.value = {
     x: event.clientX,
     y: event.clientY,
@@ -438,6 +442,10 @@ function onStagePointerDown(event: PointerEvent) {
 }
 
 function onStagePointerMove(event: PointerEvent) {
+  if (appStore.live2dOperationLocked.value) {
+    isDragging.value = false;
+    return;
+  }
   if (!isDragging.value) return;
   const dx = event.clientX - dragStart.value.x;
   const dy = event.clientY - dragStart.value.y;
@@ -447,8 +455,10 @@ function onStagePointerMove(event: PointerEvent) {
 }
 
 function onStagePointerUp(event: PointerEvent) {
+  if (!hasPointerDown.value) return;
+  hasPointerDown.value = false;
   isDragging.value = false;
-  saveTransform();
+  if (!appStore.live2dOperationLocked.value) saveTransform();
   // 判断是否为点击（移动距离小于阈值）
   const dx = event.clientX - dragStart.value.x;
   const dy = event.clientY - dragStart.value.y;
@@ -676,12 +686,26 @@ async function renderModel(resolvedUrl: string) {
   console.log("[Live2D] Model added to stage, rendered, children:", pixiApp!.stage.children.length);
   } finally {
     rendering.value = false;
+    const nextUrl = pendingModelUrl;
+    pendingModelUrl = null;
+    if (nextUrl && props.visible) {
+      void loadModel(nextUrl);
+    }
   }
 }
 
 // ── Model Loading ───────────────────────────────────────
 async function loadModel(url: string) {
-  if (!url || rendering.value) return;
+  if (!url) {
+    pendingModelUrl = null;
+    destroyModel();
+    modelLoadError.value = "";
+    return;
+  }
+  if (rendering.value) {
+    pendingModelUrl = url;
+    return;
+  }
 
   modelLoading.value = true;
   modelLoadError.value = "";
@@ -758,9 +782,7 @@ watch(
   () => props.modelUrl,
   (newUrl) => {
     if (!props.visible) return;
-    if (newUrl) {
-      loadModel(newUrl);
-    }
+    loadModel(newUrl ?? "");
   },
 );
 
@@ -895,6 +917,7 @@ defineExpose({
         'live2d-companion--collapsed': collapsed,
         'live2d-companion--pointer-through': pointerThrough,
         'live2d-companion--loading': modelLoading,
+        'live2d-companion--locked': appStore.live2dOperationLocked.value,
         'live2d-companion--idle': hasModel && !collapsed && !containerHovered,
       }"
       :style="containerStyle"
@@ -954,7 +977,7 @@ defineExpose({
       <div
         class="live2d-companion__stage"
         :style="{ visibility: (!collapsed && hasModel) ? 'visible' : 'hidden', pointerEvents: (!collapsed && hasModel) ? 'auto' : 'none' }"
-        @wheel.prevent="onStageWheel"
+        @wheel="onStageWheel"
         @pointerdown="onStagePointerDown"
         @pointermove="onStagePointerMove"
         @pointerup="onStagePointerUp"
@@ -1063,6 +1086,10 @@ defineExpose({
   user-select: none;
   overflow: hidden;
   border-radius: inherit;
+}
+
+.live2d-companion--locked .live2d-companion__stage {
+  cursor: default;
 }
 
 .live2d-companion__stage:active {

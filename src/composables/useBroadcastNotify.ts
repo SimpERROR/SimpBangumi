@@ -2,7 +2,8 @@ import { ref } from "vue";
 import { emit } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { calculateBroadcast } from "../utils/broadcastTiming";
-import { getCachedMatch, fetchMalAnimeFull } from "../utils/animeMatch";
+import { getCachedMatch, fetchMalAnimeFull, setManualMatch } from "../utils/animeMatch";
+import { isFakeSubjectId, syncFakeSubjectsToCache } from "../utils/fakeBroadcast";
 import type { TenraiAnimeFull } from "../api/Tenrai";
 
 const FOLLOWED_KEY = "bangumi.broadcast.followedSubjects";
@@ -36,8 +37,22 @@ export interface BroadcastNotification {
   timestamp: number;
   /** 番剧封面图片 URL */
   coverUrl?: string;
+  episodeNumber?: number;
+  totalEpisodes?: number;
 }
 
+
+function estimateEpisodeNumber(data: TenraiAnimeFull, broadcastTime: number): number | undefined {
+  const airedFrom = data.aired?.from;
+  if (!airedFrom) return undefined;
+  const match = airedFrom.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return undefined;
+  // aired.from is a JST calendar date; use JST midnight for the interval.
+  const firstAir = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) - 9 * 60 * 60 * 1000;
+  if (!Number.isFinite(firstAir) || broadcastTime < firstAir) return 1;
+  const episode = Math.max(1, Math.floor((broadcastTime - firstAir) / (7 * 24 * 60 * 60 * 1000)) + 1);
+  return data.episodes && data.episodes > 0 ? Math.min(episode, data.episodes) : episode;
+}
 function loadFollowed(): FollowedSubject[] {
   try {
     const raw = localStorage.getItem(FOLLOWED_KEY);
@@ -71,11 +86,18 @@ function getNotifyDelayMinutes(): number {
 
 let nextId = 1;
 
+/** 常规轮询间隔。它只是兜底，真正的准点由 preciseTimer 负责。 */
+const CHECK_INTERVAL_MS = 30_000;
+
 // Singleton state
 const followed = ref<FollowedSubject[]>(loadFollowed());
+const notifyEnabled = ref(localStorage.getItem(NOTIFY_ENABLED_KEY) === "1");
 const lastNotifiedType = new Map<number, string>();
 let checkTimer: number | null = null;
 let refreshTimer: number | null = null;
+let checkInProgress = false;
+/** 为「下一条即将到点的通知」安排的一次性定时器 */
+let preciseTimer: number | null = null;
 let notifyWindow: WebviewWindow | null = null;
 
 // ▸▸ Helpers
@@ -184,14 +206,30 @@ export function unfollowSubject(bgmId: number): void {
 // ▸▸ Check loop
 
 async function checkAndNotify(): Promise<void> {
-  if (followed.value.length === 0) return;
+  if (checkInProgress) return;
+  checkInProgress = true;
+  clearPreciseTimer();
+  if (followed.value.length === 0) {
+    checkInProgress = false;
+    return;
+  }
 
   const now = Date.now();
   const notifyBeforeMin = getNotifyBeforeMinutes();
   const notifyDelayMin = getNotifyDelayMinutes();
   const delayMs = notifyDelayMin * 60 * 1000;
 
-  for (const subject of followed.value) {
+  /** 本轮里最早的一个「还没到点」的通知时刻 */
+  let earliestPending: number | null = null;
+  function notePending(targetMs: number): void {
+    if (targetMs <= now) return;
+    if (earliestPending === null || targetMs < earliestPending) {
+      earliestPending = targetMs;
+    }
+  }
+
+  try {
+    for (const subject of followed.value) {
     const cached = getCachedMatch(subject.bgmId);
     const data: TenraiAnimeFull | null = cached?.data ?? null;
     if (!data) continue;
@@ -227,15 +265,21 @@ async function checkAndNotify(): Promise<void> {
           type: "before-broadcast",
           message: `将在约 ${Math.max(1, Math.round(remainingSec / 60))} 分钟后开始配信。`,
           broadcastTime: broadcastStartMs,
-          countdownSeconds: 0,
+          countdownSeconds: remainingSec,
           delayMinutes: notifyDelayMin,
           timestamp: now,
           coverUrl: subject.coverUrl,
+          episodeNumber: estimateEpisodeNumber(data, broadcastStartMs),
+          totalEpisodes: data.episodes ?? undefined,
         });
         if (sent) {
           lastNotifiedType.set(subject.bgmId, typeKey);
         }
+      } else {
+        notePending(notifyTargetMs);
       }
+      // 倒计时归零后会切到 on-air，为那一刻也排上精确定时器
+      notePending(broadcastStartMs + delayMs);
     }
 
     // "on-air"
@@ -255,10 +299,14 @@ async function checkAndNotify(): Promise<void> {
           delayMinutes: notifyDelayMin,
           timestamp: now,
           coverUrl: subject.coverUrl,
+          episodeNumber: estimateEpisodeNumber(data, broadcastStartMs),
+          totalEpisodes: data.episodes ?? undefined,
         });
         if (sent) {
           lastNotifiedType.set(subject.bgmId, typeKey);
         }
+      } else {
+        notePending(notifyTargetMs);
       }
     }
 
@@ -271,14 +319,64 @@ async function checkAndNotify(): Promise<void> {
       lastNotifiedType.delete(subject.bgmId);
     }
   }
+
+    schedulePreciseCheck(earliestPending);
+  } finally {
+    checkInProgress = false;
+  }
+}
+
+function clearPreciseTimer(): void {
+  if (preciseTimer !== null) {
+    window.clearTimeout(preciseTimer);
+    preciseTimer = null;
+  }
+}
+
+/**
+ * 常规轮询是 30 秒一次，光靠它通知最多会迟到 30 秒。
+ * 这里为最近的一个通知时刻单独排一次定时器，让它准点发出。
+ * 比常规间隔还远的目标交给下一次轮询，届时会再排一次，逐步收敛。
+ */
+function schedulePreciseCheck(targetMs: number | null): void {
+  if (targetMs === null) return;
+  const delay = targetMs - Date.now();
+  if (delay <= 0 || delay >= CHECK_INTERVAL_MS) return;
+  preciseTimer = window.setTimeout(() => {
+    preciseTimer = null;
+    void checkAndNotify();
+  }, delay + 200);
 }
 
 async function refreshBroadcastData(): Promise<void> {
   for (const subject of followed.value) {
+    // 假番剧的数据是本地捏造的，没有对应的远端条目可刷新
+    if (isFakeSubjectId(subject.bgmId)) continue;
     try {
-      await fetchMalAnimeFull(subject.malId);
+      const fresh = await fetchMalAnimeFull(subject.malId);
+      const cached = getCachedMatch(subject.bgmId);
+      if (fresh && cached) {
+        setManualMatch(subject.bgmId, { ...cached, data: fresh, detailFetchedAt: Date.now() });
+      }
     } catch { /* ignore */ }
   }
+}
+
+/**
+ * 清除「本轮已通知过」的记录，让同一条目能再次触发通知。
+ * 不传参数则清空全部。
+ */
+export function resetNotifyState(bgmId?: number): void {
+  if (bgmId === undefined) {
+    lastNotifiedType.clear();
+  } else {
+    lastNotifiedType.delete(bgmId);
+  }
+}
+
+/** 立即跑一次检查，不必等 30 秒的轮询 */
+export async function runBroadcastCheckNow(): Promise<void> {
+  await checkAndNotify();
 }
 
 // ▸▸ Test notification
@@ -332,6 +430,8 @@ export function sendTestNotification(type: NotificationType): void {
     delayMinutes: notifyDelayMin,
     timestamp: now,
     coverUrl: picked.coverUrl,
+    episodeNumber: 3,
+    totalEpisodes: 12,
   });
 }
 
@@ -344,14 +444,18 @@ export function clearAllFollowed(): void {
 // ▸▸ Lifecycle
 
 export function startBroadcastNotify(): void {
+  notifyEnabled.value = true;
   if (checkTimer !== null) return;
+
+  // 假番剧的数据可能被「清除 MAL 匹配缓存」清掉，启动时重新写回
+  syncFakeSubjectsToCache();
 
   // Pre-create the notification window so the first notification appears instantly
   void ensureNotifyWindow();
 
   checkTimer = window.setInterval(() => {
     void checkAndNotify();
-  }, 30_000);
+  }, CHECK_INTERVAL_MS);
 
   refreshTimer = window.setInterval(() => {
     void refreshBroadcastData();
@@ -361,6 +465,7 @@ export function startBroadcastNotify(): void {
 }
 
 export function stopBroadcastNotify(): void {
+  notifyEnabled.value = false;
   if (checkTimer !== null) {
     window.clearInterval(checkTimer);
     checkTimer = null;
@@ -369,6 +474,7 @@ export function stopBroadcastNotify(): void {
     window.clearInterval(refreshTimer);
     refreshTimer = null;
   }
+  clearPreciseTimer();
   // Close notification window (fire-and-forget, don't block)
   if (notifyWindow) {
     notifyWindow.close().catch(() => {});
@@ -381,11 +487,14 @@ export function stopBroadcastNotify(): void {
 export function useBroadcastNotify() {
   return {
     followed,
+    notifyEnabled,
     isFollowed,
     followSubject,
     unfollowSubject,
     sendTestNotification,
     clearAllFollowed,
+    resetNotifyState,
+    runBroadcastCheckNow,
     startBroadcastNotify,
     stopBroadcastNotify,
   };

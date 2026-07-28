@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import { useBroadcastNotify } from "../../composables/useBroadcastNotify";
 
 const DETAIL_SOURCE_KEY = "bangumi.broadcast.detailSource";
 const BROADCAST_DISABLED_KEY = "bangumi.broadcast.disabled";
 const NOTIFY_ENABLED_KEY = "bangumi.broadcast.notifyEnabled";
 const NOTIFY_BEFORE_MINUTES_KEY = "bangumi.broadcast.notifyBeforeMinutes";
 const NOTIFY_DELAY_MINUTES_KEY = "bangumi.broadcast.notifyDelayMinutes";
+const { notifyEnabled, startBroadcastNotify, stopBroadcastNotify } = useBroadcastNotify();
 type DetailSource = "tenrai" | "mal";
 
 const detailSource = ref<DetailSource>(
@@ -14,10 +16,6 @@ const detailSource = ref<DetailSource>(
 
 const broadcastDisabled = ref(
   localStorage.getItem(BROADCAST_DISABLED_KEY) === "1",
-);
-
-const notifyEnabled = ref(
-  localStorage.getItem(NOTIFY_ENABLED_KEY) === "1",
 );
 
 const notifyBeforeMinutes = ref(
@@ -38,6 +36,11 @@ watch(broadcastDisabled, (val) => {
 
 watch(notifyEnabled, (val) => {
   localStorage.setItem(NOTIFY_ENABLED_KEY, val ? "1" : "0");
+  if (val) {
+    startBroadcastNotify();
+  } else {
+    stopBroadcastNotify();
+  }
 });
 
 watch(notifyBeforeMinutes, (val) => {

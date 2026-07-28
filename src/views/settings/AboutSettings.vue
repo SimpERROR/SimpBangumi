@@ -29,7 +29,6 @@ const MAL_SITE = "https://myanimelist.net";
       <p class="settings-card__desc">一个基于 Bangumi API 的桌面客户端，帮助你管理番组收藏、发现新作品。</p>
       <dl class="about-meta">
         <div><dt>技术栈</dt><dd>Tauri v2 · Rust · Vue 3</dd></div>
-        <div><dt>开源协议</dt><dd>GPL-3.0</dd></div>
       </dl>
     </section>
 
@@ -57,10 +56,6 @@ const MAL_SITE = "https://myanimelist.net";
           <dt>Font Awesome</dt>
           <dd>界面中使用的图标集。<a :href="FONTAWESOME_SITE" target="_blank" rel="noopener noreferrer" class="about-link">官网 ↗</a></dd>
         </div>
-        <div>
-          <dt>开源第三方组件</dt>
-          <dd>本项目使用了大量 MIT / Apache 2.0 / BSD 等协议的开源依赖，在此向所有底层依赖的开发者致以最崇高的敬意。</dd>
-        </div>
       </dl>
     </section>
 
@@ -74,17 +69,7 @@ const MAL_SITE = "https://myanimelist.net";
         <a :href="MAL_SITE" target="_blank" rel="noopener noreferrer" class="about-link">MyAnimeList ↗</a>
       </div>
     </section>
-
-    <!-- ═══ 免责声明 ═══ -->
-    <section class="settings-card">
-      <h3 class="settings-card__title">烦请注意</h3>
-      <p class="about-disclaimer">
-        SimpBangumi 不内置、不提供、亦不分发任何 Live2D 角色模型及 Live2D Cubism SDK 核心运行时。所有相关资产均需由您自行合法获取并手动导入。<br><br>
-        SimpBangumi 不是 Bangumi 番组计划官方桌面客户端。
-      </p>
-    </section>
-
-  </div>
+</div>
 </template>
 
 <style scoped>

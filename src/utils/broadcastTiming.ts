@@ -101,38 +101,30 @@ export function calculateBroadcast(
   const timeJstAdjusted: [number, number] = [adjustedHours, adjustedMinutes];
 
   const jstOffset = 9 * 60; // JST = UTC+9 in minutes
-  const localOffset = -now.getTimezoneOffset(); // local offset in minutes
+  // Keep JST calculations in UTC fields to avoid applying the local offset twice.
+  const nowJst = new Date(now.getTime() + jstOffset * 60000);
+  const currentJstDay = nowJst.getUTCDay();
+  const currentMinJst = nowJst.getUTCHours() * 60 + nowJst.getUTCMinutes();
+  const broadcastMinJst = adjustedHours * 60 + adjustedMinutes;
 
-  // Calculate the next broadcast occurrence in JST
-  // First, get current JST time
-  const nowJst = new Date(now.getTime() + (jstOffset - localOffset) * 60000);
-  const currentJstDay = nowJst.getDay(); // 0=Sun in JST
-
-  // Calculate days until next broadcast
   let daysUntil = (adjustedDayIndex - currentJstDay + 7) % 7;
   if (daysUntil === 0) {
-    // Same day — check if broadcast time has passed
-    const broadcastMinJst = adjustedHours * 60 + adjustedMinutes;
-    const currentMinJst = nowJst.getHours() * 60 + nowJst.getMinutes();
-    // When duration known: check if broadcast ended. When unknown: just check if start time passed.
     const broadcastPassed = durationMin > 0
       ? currentMinJst >= broadcastMinJst + durationMin
       : currentMinJst >= broadcastMinJst;
-    if (broadcastPassed) {
-      daysUntil = 7;
-    }
+    if (broadcastPassed) daysUntil = 7;
   }
 
-  // Construct next broadcast date in JST
-  const nextBroadcastJst = new Date(nowJst);
-  nextBroadcastJst.setDate(nowJst.getDate() + daysUntil);
-  nextBroadcastJst.setHours(adjustedHours, adjustedMinutes, 0, 0);
-
-  // Convert to local time for display
-  const nextBroadcastLocal = new Date(
-    nextBroadcastJst.getTime() - (jstOffset - localOffset) * 60000,
-  );
-
+  // Date.UTC represents the JST wall-clock value after subtracting nine hours.
+  const nextBroadcastLocal = new Date(Date.UTC(
+    nowJst.getUTCFullYear(),
+    nowJst.getUTCMonth(),
+    nowJst.getUTCDate() + daysUntil,
+    adjustedHours - 9,
+    adjustedMinutes,
+    0,
+    0,
+  ));
   // Determine if crosses midnight JST
   const crossesMidnight = adjustedHours * 60 + adjustedMinutes + durationMin >= 24 * 60;
 
@@ -144,18 +136,22 @@ export function calculateBroadcast(
 
   // Pre-compute air-day info for "Not yet aired" check — parse manually to avoid timezone offset
   const airDate = parseAirDate(airedFrom);
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Air dates are published as JST calendar dates. Compare them against the
+  // current JST calendar date, rather than the machine local date.
+  const todayJst = Date.UTC(nowJst.getUTCFullYear(), nowJst.getUTCMonth(), nowJst.getUTCDate());
   const airDay = airDate
-    ? new Date(airDate[0], airDate[1] - 1, airDate[2])
+    ? Date.UTC(airDate[0], airDate[1] - 1, airDate[2])
     : null;
-  const isAirDateToday = airDay !== null && airDay.getTime() === today.getTime();
-  const isAirDatePast = airDay !== null && airDay.getTime() < today.getTime();
+  const isAirDateToday = airDay !== null && airDay === todayJst;
+  const isAirDatePast = airDay !== null && airDay < todayJst;
 
   // Check if anime has finished airing
   if (status === "Finished Airing") {
+    const airedToDate = parseAirDate(airedTo);
     const finishedRecently =
-      airedTo != null &&
-      (now.getTime() - new Date(airedTo).getTime()) < 7 * 24 * 60 * 60 * 1000;
+      airedToDate != null &&
+      todayJst >= Date.UTC(airedToDate[0], airedToDate[1] - 1, airedToDate[2]) &&
+      todayJst - Date.UTC(airedToDate[0], airedToDate[1] - 1, airedToDate[2]) < 7 * 24 * 60 * 60 * 1000;
 
     if (finishedRecently) {
       broadcastStatus = "finished";
@@ -204,7 +200,6 @@ export function calculateBroadcast(
   } else {
     // Currently Airing — determine exact state
     const broadcastMinJst = adjustedHours * 60 + adjustedMinutes;
-    const currentMinJst = nowJst.getHours() * 60 + nowJst.getMinutes();
     // When duration unknown and broadcast passed today, daysUntil was set to 7.
     // Treat as "ended today" rather than "not today".
     const isEndedTodayUnknownDuration = durationMin === 0 && daysUntil === 7;

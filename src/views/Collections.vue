@@ -12,7 +12,7 @@ import { autoLinkPlainText } from "../utils/autoLink";
 import { matchAnimeToTenrai, getCachedMatch, searchTenraiForMatch, fetchMalAnimeFull, setManualMatch, isSuppressed, suppressBgmId, unsuppressBgmId, shouldConfirmMatch, confirmBgmId, type AnimeMatchInfo } from "../utils/animeMatch";
 import { TenraiApi } from "../api/Tenrai";
 import { isTimeMismatch } from "../utils/timeCheck";
-import { isFollowed, followSubject, unfollowSubject } from "../composables/useBroadcastNotify";
+import { isFollowed, followSubject, unfollowSubject, useBroadcastNotify } from "../composables/useBroadcastNotify";
 import type {
   BangumiUser,
   CharacterDetail,
@@ -1915,6 +1915,7 @@ async function triggerTenraiMatch(bgmId: number, bgmName: string, bgmAirDate?: s
     TenraiMatchRefreshing.value = false;
     if (fresh) {
       TenraiMatch.value = { ...cached, data: fresh, cachedAt: Date.now(), detailFetchedAt: Date.now(), detailSource: currentSource };
+      setManualMatch(bgmId, { ...cached, data: fresh, cachedAt: Date.now(), detailFetchedAt: Date.now(), detailSource: currentSource });
     } else {
       // Fetch failed — show cached data as fallback
       TenraiMatch.value = cached;
@@ -1967,7 +1968,7 @@ function handleEnableTenraiForSubject() {
 
 // ── Broadcast notify follow/unfollow ──
 
-const broadcastNotifyEnabled = localStorage.getItem("bangumi.broadcast.notifyEnabled") === "1";
+const { notifyEnabled: broadcastNotifyEnabled } = useBroadcastNotify();
 
 function handleToggleBroadcastFollow() {
   const bgmId = detail.value?.id;
@@ -1975,9 +1976,15 @@ function handleToggleBroadcastFollow() {
   if (isFollowed(bgmId)) {
     unfollowSubject(bgmId);
   } else {
-    const name = detail.value?.name_cn || detail.value?.name || `Subject #${bgmId}`;
+    const nameCn = detail.value?.name_cn || detail.value?.name || `Subject #${bgmId}`;
+    const nameOriginal = detail.value?.name || "";
     const malId = TenraiMatch.value?.malId ?? 0;
-    followSubject(bgmId, name, malId);
+    if (!TenraiMatch.value?.data || malId <= 0) {
+      return;
+    }
+    const images = detail.value?.images;
+    const coverUrl = images?.common || images?.medium || images?.large || images?.small;
+    followSubject(bgmId, nameCn, nameOriginal, malId, coverUrl);
   }
   detailMoreMenuOpen.value = false;
 }
@@ -2620,7 +2627,7 @@ defineExpose({
                 {{ isSuppressed(detail.id) ? '为此番剧开启配信跟踪' : '为此番剧关闭配信跟踪' }}
               </button>
               <button
-                v-if="broadcastNotifyEnabled && TenraiMatch"
+                v-if="broadcastNotifyEnabled && TenraiMatch?.data && TenraiMatch.malId > 0"
                 class="detail-more-menu__item"
                 type="button"
                 @click="handleToggleBroadcastFollow()"

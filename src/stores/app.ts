@@ -25,6 +25,7 @@ const windowState = reactive({
 
 // Live2D 看板娘
 const live2dEnabled = ref(false);
+const live2dOperationLocked = ref(false);
 const live2dResetPositionCounter = ref(0);
 const live2dRefreshDialogCounter = ref(0);
 
@@ -171,6 +172,7 @@ export function useAppStore() {
     hideToast,
     window: windowState,
     live2dEnabled,
+    live2dOperationLocked,
     live2dResetPositionCounter,
     live2dRefreshDialogCounter,
     detailBackToTopVisible,

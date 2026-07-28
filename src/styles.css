@@ -542,9 +542,564 @@ h1 {
   margin-top: 8px;
 }
 
+.my-view {
+  position: relative;
+  min-height: 430px;
+}
+
+.my-route-enter-active,
+.my-route-leave-active {
+  transition: opacity 180ms ease-out, transform 220ms cubic-bezier(0.2, 0.72, 0, 1);
+  will-change: opacity, transform;
+}
+
+.my-route-leave-active {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+}
+
+.my-view--forward .my-route-enter-from,
+.my-view--back .my-route-leave-to {
+  opacity: 0;
+  transform: translateX(12px) scale(0.995);
+}
+
+.my-view--forward .my-route-leave-to,
+.my-view--back .my-route-enter-from {
+  opacity: 0;
+  transform: translateX(-12px) scale(0.995);
+}
+
+.my-overview,
+.my-login-stage {
+  display: grid;
+  gap: 22px;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.my-profile-card {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  gap: 8px;
+  min-height: 190px;
+  padding: 18px 4px 22px;
+  text-align: center;
+}
+
+.my-profile-card.has-content-below {
+  border-bottom: 1px solid var(--border);
+}
+
+.my-avatar {
+  width: 82px;
+  height: 82px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--surface-muted);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--text) 10%, transparent);
+  animation: my-avatar-enter 360ms cubic-bezier(0.2, 0.72, 0, 1) both;
+}
+
+.my-avatar--login {
+  width: 92px;
+  height: 92px;
+  margin-bottom: 8px;
+}
+
+.my-profile-copy {
+  min-width: 0;
+}
+
+.my-profile-copy h2,
+.my-login-hero h2 {
+  font-size: 23px;
+  line-height: 1.25;
+}
+
+.my-muted,
+.my-footnote {
+  color: var(--muted);
+}
+
+.my-muted {
+  margin-top: 5px;
+  font-size: 14px;
+}
+
+.my-profile-copy .my-muted {
+  font-size: 13px;
+}
+
+.my-profile-action {
+  margin-top: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.my-account-section {
+  display: grid;
+  gap: 8px;
+}
+
+.my-section-title {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.my-section-list {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.my-row,
+.my-login-prompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 14px;
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.my-row:last-child {
+  border-bottom: 0;
+}
+
+.my-row:hover {
+  background: var(--surface-muted);
+}
+
+.my-row > strong {
+  min-width: 0;
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.my-row-value {
+  max-width: 68%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.my-row--sign {
+  align-items: flex-start;
+}
+
+.my-row--sign .my-row-value {
+  line-height: 1.45;
+  text-align: right;
+  white-space: normal;
+}
+
+.my-row-chevron {
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.my-login-prompt {
+  justify-content: space-between;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.my-login-prompt:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--surface-muted);
+}
+
+.my-logout-button {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  border-radius: 8px;
+  color: var(--danger);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, transform 100ms ease;
+}
+
+.my-logout-button:hover {
+  border-color: color-mix(in srgb, var(--danger) 62%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+}
+
+.my-logout-button:active {
+  transform: scale(0.99);
+}
+
+.my-logout-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: min(100%, 420px);
+  align-self: start;
+}
+
+.my-cookie-guide__hero {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.my-cookie-guide__hero h2 {
+  font-size: 23px;
+}
+
+.my-cookie-guide__icon {
+  display: grid;
+  place-items: center;
+  width: 74px;
+  height: 74px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  animation: my-avatar-enter 360ms cubic-bezier(0.2, 0.72, 0, 1) both;
+}
+
+.my-cookie-guide__icon::before {
+  width: 34px;
+  height: 34px;
+  background: var(--accent);
+  content: "";
+  mask: url("./assets/icons/cookie-bite-solid-full.svg") center / contain no-repeat;
+  -webkit-mask: url("./assets/icons/cookie-bite-solid-full.svg") center / contain no-repeat;
+}
+
+.my-cookie-guide__card {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 520px);
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  align-self: start;
+}
+
+.my-cookie-guide__card p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.my-cookie-guide__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.my-cookie-guide__dismiss {
+  grid-column: 1 / -1;
+  justify-self: center;
+  padding: 4px 10px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.my-cookie-guide__dismiss:hover {
+  color: var(--text);
+}
+
+.my-footnote {
+  text-align: center;
+  font-size: 12px;
+}
+
+.my-login-stage {
+  grid-template-rows: 26px auto minmax(150px, auto);
+  place-items: center;
+  padding: 8px 0 28px;
+}
+
+.my-back-button {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font-size: 15px;
+  cursor: pointer;
+  transition: color 140ms ease, opacity 180ms ease-out, transform 180ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+
+.my-back-button:hover {
+  color: var(--accent-hover);
+}
+
+.my-back-button:active,
+.my-profile-action:active,
+.my-login-prompt:active {
+  transform: scale(0.98);
+}
+
+.my-back-button.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-6px);
+}
+
+.my-login-hero {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  min-height: 154px;
+  text-align: center;
+}
+
+.my-login-avatar-shell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 116px;
+  height: 116px;
+}
+
+.my-login-avatar-shell .my-avatar {
+  margin: 0;
+  animation: none;
+  transition: filter 360ms cubic-bezier(0.2, 0.72, 0, 1), opacity 240ms ease-out, transform 300ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+
+.my-login-avatar-shell.is-communicating .my-avatar {
+  filter: brightness(0.56) saturate(0.82);
+  transform: scale(0.96);
+}
+
+.my-login-loader {
+  position: absolute;
+  inset: 4px;
+  border: 3px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-top-color: var(--accent);
+  border-right-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: my-login-spin 860ms linear infinite;
+}
+
+.my-avatar-rays {
+  position: absolute;
+  inset: -9px;
+  z-index: 2;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.my-avatar-rays i {
+  --ray-angle: calc(var(--ray-index) * 30deg);
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 84%, white);
+  opacity: 0;
+  transform-origin: 50% 0;
+  transform: rotate(var(--ray-angle)) translateY(-48px) scaleY(0.25);
+  animation: my-avatar-ray-burst 560ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(var(--ray-index) * 12ms);
+}
+
+.my-login-copy {
+  display: grid;
+  gap: 4px;
+  min-height: 54px;
+  align-content: start;
+}
+
+.my-login-error {
+  max-width: 420px;
+  color: var(--danger);
+  line-height: 1.45;
+}
+
+.my-login-form {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 420px);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.my-login-completion {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: min(100%, 420px);
+  align-self: start;
+}
+
+.my-login-progress-spacer {
+  width: min(100%, 420px);
+  min-height: 100px;
+}
+
+.my-login-button {
+  width: 100%;
+}
+
+.my-pat {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.my-pat summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.my-controls-swap-enter-active,
+.my-controls-swap-leave-active {
+  transition: opacity 220ms ease-out, transform 280ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+
+.my-controls-swap-enter-active {
+  transition-delay: 90ms;
+}
+
+.my-controls-swap-enter-from {
+  opacity: 0;
+  transform: translateY(8px) scale(0.985);
+}
+
+.my-controls-swap-leave-to {
+  opacity: 0;
+  transform: translateY(6px) scale(0.985);
+}
+
+.my-copy-swap-enter-active,
+.my-copy-swap-leave-active {
+  transition: opacity 180ms ease-out, transform 240ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+
+.my-copy-swap-enter-active {
+  transition-delay: 70ms;
+}
+
+.my-copy-swap-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.my-copy-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.my-avatar-swap-enter-active,
+.my-avatar-swap-leave-active {
+  transition: opacity 240ms ease-out, transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.my-avatar-swap-enter-from {
+  opacity: 0;
+  transform: scale(0.72);
+}
+
+.my-avatar-swap-enter-active {
+  animation: my-user-avatar-pop 520ms cubic-bezier(0.16, 1.3, 0.3, 1);
+}
+
+.my-avatar-swap-leave-to {
+  opacity: 0;
+  transform: scale(1.06);
+}
+
+.my-loader-fade-enter-active,
+.my-loader-fade-leave-active {
+  transition: opacity 220ms ease-out, transform 280ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+
+.my-loader-fade-enter-from,
+.my-loader-fade-leave-to {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+@keyframes my-login-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes my-user-avatar-pop {
+  0% { opacity: 0; transform: scale(0.7); }
+  66% { opacity: 1; transform: scale(1.09); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes my-avatar-ray-burst {
+  0% {
+    opacity: 0;
+    transform: rotate(var(--ray-angle)) translateY(-43px) scaleY(0.2);
+  }
+  28% { opacity: 0.95; }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--ray-angle)) translateY(-62px) scaleY(1);
+  }
+}
+
+@keyframes my-avatar-enter {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .settings-shell {
   display: grid;
   gap: 12px;
+}
+
+.settings-page-stage {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-page-switch-enter-active,
+.settings-page-switch-leave-active {
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+
+.settings-page-switch-enter-from {
+  opacity: 0;
+  transform: translateX(8px);
+}
+
+.settings-page-switch-leave-to {
+  opacity: 0;
+  transform: translateX(-8px);
 }
 
 .settings-page {
@@ -1141,6 +1696,46 @@ h1 {
 .schedule__list {
   display: grid;
   gap: 8px;
+}
+
+/* ── 条目加载过渡 ── */
+.item-reveal-enter-active,
+.item-reveal-leave-active {
+  transition: opacity 240ms ease-out, transform 300ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+
+.item-reveal-enter-from,
+.item-reveal-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.item-reveal-leave-active {
+  position: absolute;
+}
+
+.item-reveal-move {
+  transition: transform 300ms cubic-bezier(0.2, 0.72, 0, 1);
+}
+
+.item-reveal-enter-active:nth-child(2) {
+  transition-delay: 45ms;
+}
+
+.item-reveal-enter-active:nth-child(3) {
+  transition-delay: 90ms;
+}
+
+.item-reveal-enter-active:nth-child(4) {
+  transition-delay: 135ms;
+}
+
+.item-reveal-enter-active:nth-child(5) {
+  transition-delay: 180ms;
+}
+
+.item-reveal-enter-active:nth-child(6) {
+  transition-delay: 225ms;
 }
 
 .schedule__empty {
@@ -3257,18 +3852,67 @@ button.is-dropped:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .chart-item,
-  .chart-item__fill {
+  .chart-item__fill,
+  .item-reveal-enter-active,
+  .item-reveal-leave-active,
+  .item-reveal-move,
+  .complete-panel .is-loading div,
+  .complete-panel .is-loading span,
+  .schedule .is-loading div,
+  .schedule .is-loading span,
+  .settings-page-switch-enter-active,
+  .settings-page-switch-leave-active {
     animation: none;
+    transition: none;
     opacity: 1;
     transform: none;
   }
 }
 
-.is-loading div,
-.is-loading span {
+.complete-panel .is-loading div,
+.complete-panel .is-loading span,
+.schedule .is-loading div,
+.schedule .is-loading span {
   height: 14px;
   border-radius: 999px;
-  background: var(--surface-muted);
+  background: linear-gradient(
+    100deg,
+    var(--surface-muted) 30%,
+    color-mix(in srgb, var(--surface-muted) 62%, var(--surface)) 50%,
+    var(--surface-muted) 70%
+  );
+  background-size: 200% 100%;
+  animation: loading-shimmer 1.4s ease-in-out infinite;
+}
+
+.complete-panel .is-loading:nth-child(2) > *,
+.schedule .is-loading:nth-child(2) > * {
+  animation-delay: 100ms;
+}
+
+.complete-panel .is-loading:nth-child(3) > *,
+.schedule .is-loading:nth-child(3) > * {
+  animation-delay: 200ms;
+}
+
+.complete-panel .is-loading:nth-child(4) > *,
+.schedule .is-loading:nth-child(4) > * {
+  animation-delay: 300ms;
+}
+
+.complete-panel .is-loading:nth-child(5) > *,
+.schedule .is-loading:nth-child(5) > * {
+  animation-delay: 400ms;
+}
+
+@keyframes loading-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
 }
 
 .is-loading div {
@@ -3414,6 +4058,19 @@ button.is-dropped:hover {
 
   .onboarding__pat-button {
     width: 100%;
+  }
+
+  .my-profile-card {
+    align-items: center;
+    padding: 18px 4px 22px;
+  }
+
+  .my-profile-copy {
+    padding-top: 0;
+  }
+
+  .my-profile-action {
+    width: auto;
   }
 
   .my-form-actions {

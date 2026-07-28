@@ -92,14 +92,28 @@ fn page_shows_auth_buttons(html: &str) -> bool {
     (has_login_link && has_signup_link) || (has_login_link && has_login_text) || (has_signup_link && has_signup_text)
 }
 
+fn format_backend_log(level: &str, message: &str) -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "[{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z][tauri]{level} {message}",
+        now.year(),
+        now.month() as u8,
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond(),
+    )
+}
+
 pub(crate) fn log_info(message: &str) {
-    let formatted = format!("[tauri] {message}");
+    let formatted = format_backend_log("", message);
     push_rust_log(formatted.clone());
     eprintln!("{formatted}");
 }
 
 pub(crate) fn log_error(message: &str) {
-    let formatted = format!("[tauri][error] {message}");
+    let formatted = format_backend_log("[error]", message);
     push_rust_log(formatted.clone());
     eprintln!("{formatted}");
 }
@@ -108,23 +122,32 @@ pub(crate) fn log_error(message: &str) {
 
 use std::sync::Mutex;
 
-static RUST_LOG_BUFFER: Mutex<Vec<String>> = Mutex::new(Vec::new());
-const MAX_RUST_LOGS: usize = 500;
+struct RustLogBuffer {
+    lines: Vec<String>,
+    dropped: usize,
+}
+
+static RUST_LOG_BUFFER: Mutex<RustLogBuffer> = Mutex::new(RustLogBuffer {
+    lines: Vec::new(),
+    dropped: 0,
+});
+pub(crate) const MAX_RUST_LOGS: usize = 500;
 
 fn push_rust_log(line: String) {
     if let Ok(mut buffer) = RUST_LOG_BUFFER.lock() {
-        if buffer.len() >= MAX_RUST_LOGS {
-            buffer.remove(0);
+        if buffer.lines.len() >= MAX_RUST_LOGS {
+            buffer.lines.remove(0);
+            buffer.dropped += 1;
         }
-        buffer.push(line);
+        buffer.lines.push(line);
     }
 }
 
-pub(crate) fn take_rust_logs() -> Vec<String> {
-    let mut buffer = RUST_LOG_BUFFER
+pub(crate) fn snapshot_rust_logs() -> (Vec<String>, usize) {
+    let buffer = RUST_LOG_BUFFER
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    std::mem::take(&mut *buffer)
+    (buffer.lines.clone(), buffer.dropped)
 }
 
 /// Send a GET request with the given Cookie header, manually following redirects
@@ -160,10 +183,17 @@ async fn fetch_with_cookie_redirect(
 
         let base = Url::parse(&url)
             .map_err(|error| format!("Invalid base URL {url}: {error}"))?;
-        url = base
+        let next_url = base
             .join(&location)
-            .map_err(|error| format!("Invalid redirect location {location}: {error}"))?
-            .to_string();
+            .map_err(|error| format!("Invalid redirect location {location}: {error}"))?;
+
+        let Some(host) = next_url.host_str() else {
+            return Err("Cookie redirect target has no host".to_string());
+        };
+        if next_url.scheme() != "https" || !allowed_bangumi_host(host) {
+            return Err("Refusing to forward Bangumi Cookie to an untrusted redirect target".to_string());
+        }
+        url = next_url.to_string();
     }
 
     Err("Too many redirects while fetching with cookie".to_string())
@@ -414,7 +444,8 @@ async fn bangumi_api_get(
 ) -> Result<Value, String> {
     log_info(&format!("invoke bangumi_api_get path={path}"));
     let token = auth::load_token()?;
-    let client = BangumiClient::new(token.map(|token| token.access_token))?;
+    let access_token = token.map(|token| token.access_token);
+    let client = BangumiClient::new(access_token.clone())?;
     let first_attempt = client
         .request_json(Method::GET, &path, query.clone(), None)
         .await;
@@ -426,7 +457,7 @@ async fn bangumi_api_get(
         }
         Err(error) if auth::is_auth_error(&error) => {
             log_error(&format!("bangumi_api_get auth failure path={path}: {error}"));
-            auth::refresh_saved_oauth_session().await?;
+            auth::refresh_saved_oauth_session_if_current(access_token.as_deref()).await?;
             let refreshed = auth::load_token()?;
             let refreshed_client = BangumiClient::new(refreshed.map(|token| token.access_token))?;
             log_info(&format!("retrying bangumi_api_get after refresh path={path}"));
@@ -451,7 +482,8 @@ async fn bangumi_api_request(
     log_info(&format!("invoke bangumi_api_request method={} path={}", method.as_str(), path));
 
     let token = auth::load_token()?;
-    let client = BangumiClient::new(token.map(|token| token.access_token))?;
+    let access_token = token.map(|token| token.access_token);
+    let client = BangumiClient::new(access_token.clone())?;
     let first_attempt = client
         .request_json(method.clone(), &path, query.clone(), body.clone())
         .await;
@@ -472,7 +504,7 @@ async fn bangumi_api_request(
                 path,
                 error
             ));
-            auth::refresh_saved_oauth_session().await?;
+            auth::refresh_saved_oauth_session_if_current(access_token.as_deref()).await?;
             let refreshed = auth::load_token()?;
             let refreshed_client = BangumiClient::new(refreshed.map(|token| token.access_token))?;
             log_info(&format!(
@@ -825,14 +857,28 @@ async fn import_live2d_model(
         return Err(format!("模型「{name}」已存在，请使用不同的名称。"));
     }
 
-    std::fs::create_dir_all(&dest_root).map_err(|e| format!("无法创建目录: {e}"))?;
-    copy_dir_recursive(source, &dest_root)?;
+    let temp_root = dest_root.with_file_name(format!(".{name}.importing-{}", std::process::id()));
+    if temp_root.exists() {
+        return Err("模型导入临时目录已存在，请稍后重试。".to_string());
+    }
+    std::fs::create_dir_all(&temp_root).map_err(|e| format!("无法创建临时目录: {e}"))?;
+    if let Err(error) = copy_dir_recursive(source, &temp_root) {
+        let _ = std::fs::remove_dir_all(&temp_root);
+        return Err(error);
+    }
+
+    if dest_root.exists() {
+        let _ = std::fs::remove_dir_all(&temp_root);
+        return Err(format!("模型“{name}”已存在，请使用不同的名称。"));
+    }
+    std::fs::rename(&temp_root, &dest_root)
+        .map_err(|e| { let _ = std::fs::remove_dir_all(&temp_root); format!("导入模型失败: {e}") })?;
 
     let dest_model_path = dest_root.join(&model_file_name);
     if !dest_model_path.exists() {
+        let _ = std::fs::remove_dir_all(&dest_root);
         return Err(format!("复制失败，未找到: {model_file_name}"));
     }
-
     let path = dest_model_path.to_str().ok_or("路径非 UTF-8")?.to_string();
     log_info(&format!("Model imported: {name} -> {path}"));
     Ok(Live2dModelInfo { name: name.to_string(), path })
@@ -905,7 +951,7 @@ async fn download_live2d_cubism_core(
     let dest_path = dest_dir.join(CUBISM_CORE_FILENAME);
 
     // 已存在则跳过
-    if dest_path.exists() {
+    if dest_path.exists() && std::fs::metadata(&dest_path).map(|m| m.len() > 0).unwrap_or(false) {
         log_info("Cubism 4 Core already exists, skipping download.");
         return Ok(dest_path
             .to_str()
@@ -936,9 +982,16 @@ async fn download_live2d_cubism_core(
         .await
         .map_err(|error| format!("读取响应失败: {error}"))?;
 
-    std::fs::write(&dest_path, &bytes)
+    let temp_path = dest_path.with_extension("js.tmp");
+    std::fs::write(&temp_path, &bytes)
         .map_err(|error| format!("写入文件失败: {error}"))?;
-
+    if dest_path.exists() {
+        let _ = std::fs::remove_file(&dest_path);
+    }
+    if let Err(error) = std::fs::rename(&temp_path, &dest_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("无法保存运行时文件: {error}"));
+    }
     let path_str = dest_path
         .to_str()
         .ok_or_else(|| "路径包含非 UTF-8 字符。".to_string())?

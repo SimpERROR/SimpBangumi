@@ -11,6 +11,7 @@ interface FrontendLogEntry {
 
 const collectedLogs: FrontendLogEntry[] = [];
 const MAX_LOGS = 500;
+let droppedLogCount = 0;
 
 function serializeArg(arg: unknown): string {
   if (arg instanceof ErrorEvent) {
@@ -39,6 +40,7 @@ function serializeArg(arg: unknown): string {
 function pushLog(level: LogLevel, ...args: unknown[]) {
   if (collectedLogs.length >= MAX_LOGS) {
     collectedLogs.shift();
+    droppedLogCount += 1;
   }
 
   const joined = args.map(serializeArg).join(" ");
@@ -117,6 +119,11 @@ export async function exportDiagnostics(): Promise<string> {
   const frontendLogs = getFrontendLogsForExport();
   const filePath: string = await invoke("export_diagnostics", {
     frontendErrors: frontendLogs.length > 0 ? frontendLogs : null,
+    frontendLogStats: {
+      retained: frontendLogs.length,
+      dropped: droppedLogCount,
+      capacity: MAX_LOGS,
+    },
   });
   return filePath;
 }

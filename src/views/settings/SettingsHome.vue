@@ -23,6 +23,10 @@ function openWebLoginSettings() {
   emit("open-page", "web-login");
 }
 
+function openLegalComplianceSettings() {
+  emit("open-page", "legal-compliance");
+}
+
 function openDeveloperSettings() {
   emit("open-page", "developer");
 }
@@ -72,6 +76,15 @@ function openDeveloperSettings() {
         </div>
         <span class="settings-entry__chevron" aria-hidden="true">></span>
       </button>
+
+      <button class="item item--button settings-entry" type="button" @click="openLegalComplianceSettings">
+        <div class="settings-entry__content">
+          <h3>法律与合规</h3>
+          <p>了解数据处理、OAuth、设备安全和第三方服务。</p>
+        </div>
+        <span class="settings-entry__chevron" aria-hidden="true">></span>
+      </button>
+
 
       <button class="item item--button settings-entry" type="button" @click="openDeveloperSettings">
         <div class="settings-entry__content">

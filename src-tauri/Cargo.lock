@@ -231,7 +231,9 @@ dependencies = [
  "time",
  "tokio",
  "url",
+ "windows",
  "windows-sys 0.59.0",
+ "zeroize",
 ]
 
 [[package]]

@@ -49,7 +49,10 @@ export async function toggleMaximizeWindow() {
   const appStore = useAppStore();
 
   if (appStore.window.fullscreen) {
+    // 退出全屏即可恢复此前的窗口状态，不应再叠加最大化/还原操作
     await appWindow.setFullscreen(false);
+    await syncWindowState();
+    return;
   }
 
   if (appStore.window.maximized) {

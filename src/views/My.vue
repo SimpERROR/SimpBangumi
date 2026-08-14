@@ -28,11 +28,17 @@ const authorizeUrl = ref("");
 const form = reactive({ submitting: false, error: "" });
 const loginState = ref<LoginState>("idle");
 const oauthPhase = ref<OAuthPhase>("authorization");
+const loginProgress = ref(0);
+const loginProgressLabel = ref("");
+const loginProgressPercent = computed(() => Math.round(loginProgress.value));
 const navigationDirection = ref<"forward" | "back">("forward");
 const logoutState = ref<LogoutState>("confirming");
 const logoutAvatarUrl = ref(akariAvatar);
 const logoutError = ref("");
 const shouldShowCookieGuide = ref(false);
+let loginProgressGeneration = 0;
+let loginProgressAnimationFrame: number | null = null;
+let resolveLoginProgressAnimation: (() => void) | null = null;
 
 const user = computed<BangumiUser | null>(() => sessionStore.session.value?.user ?? null);
 const displayName = computed(() => user.value?.nickname || user.value?.username || "未登录");
@@ -104,6 +110,69 @@ function preloadImage(url: string): Promise<void> {
   });
 }
 
+function stopLoginProgressAnimation() {
+  if (loginProgressAnimationFrame !== null) {
+    cancelAnimationFrame(loginProgressAnimationFrame);
+    loginProgressAnimationFrame = null;
+  }
+  resolveLoginProgressAnimation?.();
+  resolveLoginProgressAnimation = null;
+}
+
+function resetLoginProgress() {
+  loginProgressGeneration += 1;
+  stopLoginProgressAnimation();
+  loginProgress.value = 0;
+  loginProgressLabel.value = "";
+}
+
+function animateLoginProgressTo(nextTarget: number, duration: number, linear = false): Promise<void> {
+  const startValue = loginProgress.value;
+  const distance = nextTarget - startValue;
+  if (distance <= 0.01) {
+    loginProgress.value = nextTarget;
+    return Promise.resolve();
+  }
+
+  const startTime = performance.now();
+  return new Promise((resolve) => {
+    resolveLoginProgressAnimation = resolve;
+    const animate = (now: number) => {
+      const elapsed = Math.min(1, (now - startTime) / duration);
+      const eased = linear ? elapsed : 1 - Math.pow(1 - elapsed, 3);
+      loginProgress.value = startValue + distance * eased;
+      if (elapsed < 1) {
+        loginProgressAnimationFrame = requestAnimationFrame(animate);
+        return;
+      }
+      loginProgress.value = nextTarget;
+      loginProgressAnimationFrame = null;
+      resolveLoginProgressAnimation = null;
+      resolve();
+    };
+    loginProgressAnimationFrame = requestAnimationFrame(animate);
+  });
+}
+
+function setLoginProgress(value: number, label: string, stallLimit?: number): Promise<void> {
+  const generation = ++loginProgressGeneration;
+  stopLoginProgressAnimation();
+  loginProgressLabel.value = label;
+
+  const nextTarget = Math.max(loginProgress.value, Math.min(100, value));
+  const duration = Math.min(900, Math.max(280, (nextTarget - loginProgress.value) * 24));
+  const stageAnimation = animateLoginProgressTo(nextTarget, duration);
+  void stageAnimation.then(() => {
+    if (generation !== loginProgressGeneration || stallLimit === undefined) return;
+    const driftTarget = Math.max(nextTarget, Math.min(99, stallLimit));
+    const driftDistance = driftTarget - loginProgress.value;
+    if (driftDistance <= 0.01) return;
+    const driftDuration = Math.max(4800, driftDistance * 420);
+    void animateLoginProgressTo(driftTarget, driftDuration, true);
+  });
+  return stageAnimation;
+}
+
 async function finishLogin(result: { ok: true; data: { authenticated: boolean; user?: BangumiUser | null } } | { ok: false; error: string }) {
   if (!result.ok) {
     form.error = result.error;
@@ -112,9 +181,11 @@ async function finishLogin(result: { ok: true; data: { authenticated: boolean; u
     return;
   }
   sessionStore.session.value = result.data;
+  setLoginProgress(88, "正在加载账户资料", 94);
   await preloadImage(avatarUrl.value);
   const guideDismissed = localStorage.getItem(COOKIE_GUIDE_DISMISSED_KEY) === "1";
   if (!guideDismissed) {
+    setLoginProgress(95, "正在检查网页功能状态", 99);
     const cookieStatus = await bangumi.getWebCookieStatus();
     shouldShowCookieGuide.value = cookieStatus.ok && !cookieStatus.data.configured;
   } else {
@@ -123,6 +194,7 @@ async function finishLogin(result: { ok: true; data: { authenticated: boolean; u
   form.submitting = false;
   form.error = "";
   patToken.value = "";
+  await setLoginProgress(100, "登录完成");
   loginState.value = "success";
   emit("authenticated");
 }
@@ -137,13 +209,19 @@ async function loginWithPat() {
   form.error = "";
   loginState.value = "authenticating";
   oauthPhase.value = "authorization";
-  await finishLogin(await bangumi.loginWithPersonalAccessToken(token));
+  resetLoginProgress();
+  setLoginProgress(18, "正在验证访问令牌", 77);
+  const result = await bangumi.loginWithPersonalAccessToken(token);
+  if (result.ok) setLoginProgress(78, "正在建立本地会话", 87);
+  await finishLogin(result);
 }
 
 async function loginWithOAuth() {
   form.submitting = true;
   form.error = "";
   loginState.value = "authenticating";
+  resetLoginProgress();
+  setLoginProgress(8, "正在创建授权请求", 15);
   const start = await auth.startOAuthLogin(appStore.theme.value);
   if (!start.ok) {
     form.error = start.error;
@@ -151,6 +229,7 @@ async function loginWithOAuth() {
     loginState.value = "error";
     return;
   }
+  setLoginProgress(16, "正在打开授权页面", 23);
   authorizeUrl.value = start.data;
   try {
     const { openUrl } = await import("@tauri-apps/plugin-opener");
@@ -164,12 +243,16 @@ async function loginWithOAuth() {
       return;
     }
   }
-  await finishLogin(await auth.finishOAuthLogin({
+  setLoginProgress(24, "等待你在网页中确认授权");
+  const result = await auth.finishOAuthLogin({
     showWorkerOverlay: false,
     onWorkerCommunication: () => {
       oauthPhase.value = "worker";
+      setLoginProgress(56, "授权成功，正在建立安全登录会话", 79);
     },
-  }));
+  });
+  if (result.ok) setLoginProgress(80, "已建立安全登录会话", 87);
+  await finishLogin(result);
 }
 
 function openLogin() {
@@ -177,6 +260,7 @@ function openLogin() {
   mode.value = "login";
   loginState.value = "idle";
   oauthPhase.value = "authorization";
+  resetLoginProgress();
   form.error = "";
 }
 
@@ -193,6 +277,7 @@ function retryLogin() {
   oauthPhase.value = "authorization";
   form.error = "";
   authorizeUrl.value = "";
+  resetLoginProgress();
 }
 
 function completeLogin() {
@@ -247,7 +332,6 @@ async function confirmLogout() {
   }
 
   sessionStore.session.value = result.data;
-  sessionStore.oauthTokens.value = null;
   await preloadImage(akariAvatar);
   logoutState.value = "success";
   emit("loggedOut");
@@ -266,16 +350,18 @@ function retryLogout() {
         <button class="my-back-button" type="button" @click="closeCookieGuide">‹ <span>我的</span></button>
         <div class="my-cookie-guide__hero">
           <span class="my-cookie-guide__icon" aria-hidden="true"></span>
-          <h2>下一步？</h2>
-          <p class="my-muted">配置网页登录与 Cookie</p>
+          <h2>下一步：启用可选的扩展功能</h2>
+          <p class="my-muted">按需配置 Bangumi 网页 Cookie</p>
         </div>
         <div class="my-cookie-guide__card">
-          <p>OAuth 已用于 Bangumi API 登录，但部分网页数据抓取及遇到风控的请求仍需要网页登录 Cookie。</p>
-          <p>你可以前往「设置」→「网页登录与 Cookie」，在应用内完成网页登录并自动获取 Cookie。</p>
+          <p>OAuth 登录已可使用条目浏览、收藏与进度管理等核心功能。Cookie 仅用于目录详情、向目录添加角色或人物，以及部分收藏操作的网页回退。</p>
+          <p>获取条目吐槽箱、角色评论等信息时，未配置 Cookie 更容易遭遇风控而无法显示；对于部分特殊条目，未配置会导致无法获取上述信息。</p>
+          <p>现在无需立刻配置，使用相关功能时应用也会再次提示。若要启用，可前往“设置 → 网页登录与 Cookie”在应用内登录并自动获取。</p>
+          <p>我们会将您的 Cookie 本地加密保存，不会回显，更不会发送给非 Bangumi 官方的远程服务器。</p>
           <div class="my-cookie-guide__actions">
-            <button class="primary-button" type="button" @click="openCookieSettings">前往设置</button>
-            <button class="secondary-button" type="button" @click="closeCookieGuide">稍后设置</button>
-            <button class="my-cookie-guide__dismiss" type="button" @click="dismissCookieGuide">不再显示</button>
+            <button class="primary-button" type="button" @click="openCookieSettings">现在配置</button>
+            <button class="secondary-button" type="button" @click="closeCookieGuide">以后再说</button>
+            <button class="my-cookie-guide__dismiss" type="button" @click="dismissCookieGuide">不再显示此引导</button>
           </div>
         </div>
       </div>
@@ -324,13 +410,20 @@ function retryLogout() {
               <i v-for="index in 12" :key="index" :style="{ '--ray-index': index - 1 }" />
             </span>
             <Transition name="my-loader-fade">
-              <span v-if="loginState === 'authenticating'" class="my-login-loader" aria-label="通讯中" />
+              <svg v-if="loginState === 'authenticating'" class="my-login-loader my-login-loader--progress" viewBox="0 0 100 100" role="progressbar" :aria-label="loginProgressLabel" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="loginProgressPercent">
+                <circle class="my-login-loader__track" cx="50" cy="50" r="47" pathLength="100" />
+                <circle class="my-login-loader__value" cx="50" cy="50" r="47" pathLength="100" :style="{ strokeDashoffset: 100 - loginProgress }" />
+              </svg>
             </Transition>
           </div>
           <Transition name="my-copy-swap" mode="out-in">
             <div :key="`${loginState}-${oauthPhase}`" class="my-login-copy" aria-live="polite">
               <h2>{{ loginTitle }}</h2>
               <p class="my-muted" :class="{ 'my-login-error': loginState === 'error' }">{{ loginSubtitle }}</p>
+              <div v-if="loginState === 'authenticating'" class="my-login-progress" aria-hidden="true">
+                <span>{{ loginProgressLabel }}</span>
+                <strong>{{ loginProgressPercent }}%</strong>
+              </div>
             </div>
           </Transition>
         </div>

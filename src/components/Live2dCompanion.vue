@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import * as PIXI from "pixi.js";
 import { Application } from "pixi.js";
-import { useAppStore } from "../stores/app";
+import { NSFW_FIRST_NOTICE_SEEN_KEY, useAppStore } from "../stores/app";
 
 // ── Store ───────────────────────────────────────────────
 const appStore = useAppStore();
@@ -12,6 +12,7 @@ const appStore = useAppStore();
 const dialogVisible = ref(false);
 const dialogText = ref("");
 const dialogTimer = ref<number | null>(null);
+const nsfwFirstNoticeVisible = ref(false);
 let autoSpeakTimer: number | null = null;
 
 function getRandomMessage(): string {
@@ -20,17 +21,23 @@ function getRandomMessage(): string {
   return msgs[Math.floor(Math.random() * msgs.length)];
 }
 
-function showDialog(text: string) {
-  if (dialogTimer.value !== null) {
-    window.clearTimeout(dialogTimer.value);
-  }
-  dialogText.value = text;
-  dialogVisible.value = true;
+function scheduleDialogHide(text: string) {
   const durationMs = Math.max(2000, Math.min(20000, text.length * 160));
   dialogTimer.value = window.setTimeout(() => {
     dialogVisible.value = false;
     dialogTimer.value = null;
   }, durationMs);
+}
+
+function showDialog(text: string, persistent = false, bypassNsfwNoticeLock = false) {
+  if (nsfwFirstNoticeVisible.value && !bypassNsfwNoticeLock) return;
+  if (dialogTimer.value !== null) {
+    window.clearTimeout(dialogTimer.value);
+    dialogTimer.value = null;
+  }
+  dialogText.value = text;
+  dialogVisible.value = true;
+  if (!persistent) scheduleDialogHide(text);
 }
 
 function speakRandom() {
@@ -113,6 +120,29 @@ function nsfwInteractionAvailable(): boolean {
   return appStore.nsfwInteractionEnabled.value;
 }
 
+function showNsfwFirstNotice(): boolean {
+  if (nsfwFirstNoticeVisible.value) return false;
+  try {
+    if (localStorage.getItem(NSFW_FIRST_NOTICE_SEEN_KEY) === "1") return false;
+    localStorage.setItem(NSFW_FIRST_NOTICE_SEEN_KEY, "1");
+  } catch {
+    // Storage may be unavailable; keep the notice scoped to this app session.
+    if (nsfwFirstNoticeVisible.value) return false;
+  }
+  nsfwFirstNoticeVisible.value = true;
+  return true;
+}
+
+function showNsfwDialog(text: string) {
+  const isFirstInteraction = showNsfwFirstNotice();
+  showDialog(text, isFirstInteraction, isFirstInteraction);
+}
+
+function dismissNsfwFirstNotice() {
+  nsfwFirstNoticeVisible.value = false;
+  if (dialogVisible.value) scheduleDialogHide(dialogText.value);
+}
+
 /** 当前是否在浏览 NSFW 条目（已通过警告） */
 function isBrowsingNsfw(): boolean {
   return appStore.currentDetailNsfw.value && !appStore.nsfwWarningVisible.value;
@@ -122,21 +152,27 @@ function isBrowsingNsfw(): boolean {
 function speakNsfwWarning() {
   if (!nsfwInteractionAvailable()) return;
   const msg = pickRandom(appStore.nsfwWarningMessages.value);
-  if (msg) showDialog(msg);
+  if (msg) {
+    showNsfwDialog(msg);
+  }
 }
 
 /** 显示 NSFW 浏览中对话 */
 function speakNsfwBrowsing() {
   if (!nsfwInteractionAvailable()) return;
   const msg = pickRandom(appStore.nsfwBrowsingMessages.value);
-  if (msg) showDialog(msg);
+  if (msg) {
+    showNsfwDialog(msg);
+  }
 }
 
 /** 显示 NSFW 退出对话 */
 function speakNsfwExit() {
   if (!nsfwInteractionAvailable()) return;
   const msg = pickRandom(appStore.nsfwExitMessages.value);
-  if (msg) showDialog(msg);
+  if (msg) {
+    showNsfwDialog(msg);
+  }
 }
 
 // ── Props ───────────────────────────────────────────────
@@ -736,6 +772,7 @@ async function loadModel(url: string) {
 
 // ── Interaction ─────────────────────────────────────────
 function handleDialogClick() {
+  if (nsfwFirstNoticeVisible.value) return;
   dialogVisible.value = false;
   if (dialogTimer.value !== null) {
     window.clearTimeout(dialogTimer.value);
@@ -963,6 +1000,36 @@ defineExpose({
         </div>
       </Transition>
 
+      <Transition name="notice-slide">
+        <aside
+          v-if="nsfwFirstNoticeVisible"
+          class="live2d-companion__nsfw-notice"
+          role="status"
+          aria-live="polite"
+        >
+          <button
+            class="live2d-companion__nsfw-notice-close"
+            type="button"
+            aria-label="关闭 NSFW 互动说明"
+            title="关闭"
+            @click.stop="dismissNsfwFirstNotice"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+          <p class="live2d-companion__nsfw-notice-title">你貌似遭到了看板娘的吐槽 ::&gt;_&lt;:: ！</p>
+          <p class="live2d-companion__nsfw-notice-body">
+            若感冒犯，我们对您致以最诚挚的歉意。您可移步「设置」-「显示设置」关闭此类互动。
+          </p>
+          <div class="live2d-companion__nsfw-notice-privacy">
+            <p>
+              SimpBangumi 理解每一位用户的诉求，且绝不会收集或上传你的浏览历史。若欲了解我们收集信息的范围，烦请查阅「设置」-「法律与合规」。
+            </p>
+          </div>
+        </aside>
+      </Transition>
+
       <!-- 模型错误提示 -->
       <div v-if="modelLoadError" class="live2d-companion__error">
         <span>⚠ {{ modelLoadError }}</span>
@@ -1026,12 +1093,9 @@ defineExpose({
   border-radius: 24px;
 }
 
-.live2d-companion--pointer-through {
-  pointer-events: none;
-}
-
-.live2d-companion--pointer-through .live2d-companion__toggle {
-  pointer-events: auto;
+.live2d-companion--pointer-through,
+.live2d-companion--pointer-through * {
+  pointer-events: none !important;
 }
 
 .live2d-companion__toggle {
@@ -1199,6 +1263,112 @@ defineExpose({
   height: 12px;
   background: var(--accent, #2f6f63);
   border-radius: 2px;
+}
+
+/* ── 首次 NSFW 互动说明 ─────────────────────────────── */
+.live2d-companion__nsfw-notice {
+  position: absolute;
+  right: calc(100% + 14px);
+  bottom: 0;
+  z-index: 30;
+  width: min(380px, calc(100vw - 48px));
+  padding: 18px;
+  border: 1px solid var(--border, #dce2ea);
+  border-radius: 8px;
+  background: var(--surface, #ffffff);
+  color: var(--text, #17202a);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.16);
+}
+
+.live2d-companion__nsfw-notice-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted, #697386);
+  cursor: pointer;
+}
+
+.live2d-companion__nsfw-notice-close:hover {
+  background: var(--surface-muted, #f6f8fb);
+  color: var(--text, #17202a);
+}
+
+.live2d-companion__nsfw-notice-close:focus-visible {
+  outline: 2px solid var(--accent, #2f6f63);
+  outline-offset: 2px;
+}
+
+.live2d-companion__nsfw-notice-close svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.live2d-companion__nsfw-notice-title {
+  margin: 0 32px 8px 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.live2d-companion__nsfw-notice-body,
+.live2d-companion__nsfw-notice-privacy p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.live2d-companion__nsfw-notice-body {
+  color: var(--text, #17202a);
+}
+
+.live2d-companion__nsfw-notice-privacy {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #dce2ea);
+  color: var(--muted, #697386);
+}
+
+.live2d-companion__nsfw-notice-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted, #697386);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.notice-slide-enter-active,
+.notice-slide-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.notice-slide-enter-from,
+.notice-slide-leave-to {
+  opacity: 0;
+  transform: translateX(10px);
+}
+
+@media (max-width: 720px) {
+  .live2d-companion__nsfw-notice {
+    position: fixed;
+    top: 64px;
+    right: 16px;
+    bottom: auto;
+    left: 16px;
+    width: auto;
+  }
 }
 
 /* ── 气泡动画 ────────────────────────────────────────── */

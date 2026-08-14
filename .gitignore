@@ -15,7 +15,11 @@ Thumbs.db
 .idea/
 target/
 target-check/
-public/
+public/*
+!public/models/
+!public/models/animeface/
+!public/models/animeface/lbpcascade_animeface.xml
+!public/models/animeface/README.md
 AGENTS.md
 CLAUDE.md
 .claude/

@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import { version } from "../../../package.json";
 import appLogo from "../../assets/app-logo.png";
+import CollectionGames from "../../components/CollectionGames.vue";
 
 const GITHUB_REPO = "https://github.com/SimpERROR/SimpBangumi";
 const BANGUMI_SITE = "https://bgm.tv";
@@ -12,6 +14,22 @@ const TENRAI_SITE = "https://api.tenrai.org";
 const FONTAWESOME_SITE = "https://fontawesome.com";
 const LIVE2D_SITE = "https://www.live2d.com";
 const MAL_SITE = "https://myanimelist.net";
+const gameOpen = ref(false);
+let versionClickCount = 0;
+let versionClickStartedAt = 0;
+
+function handleVersionClick() {
+  const now = Date.now();
+  if (!versionClickStartedAt || now - versionClickStartedAt > 2500) {
+    versionClickCount = 0;
+    versionClickStartedAt = now;
+  }
+  versionClickCount += 1;
+  if (versionClickCount < 5) return;
+  versionClickCount = 0;
+  versionClickStartedAt = 0;
+  gameOpen.value = true;
+}
 </script>
 
 <template>
@@ -23,7 +41,7 @@ const MAL_SITE = "https://myanimelist.net";
         <img :src="appLogo" alt="SimpBangumi" class="about-brand__logo" />
         <div class="about-brand__text">
           <h1 class="about-brand__name">SimpBangumi</h1>
-          <p class="about-brand__version">v{{ version }}</p>
+          <button class="about-brand__version" type="button" :aria-label="`版本 ${version}`" @click="handleVersionClick">v{{ version }}</button>
         </div>
       </div>
       <p class="settings-card__desc">一个基于 Bangumi API 的桌面客户端，帮助你管理番组收藏、发现新作品。</p>
@@ -69,7 +87,8 @@ const MAL_SITE = "https://myanimelist.net";
         <a :href="MAL_SITE" target="_blank" rel="noopener noreferrer" class="about-link">MyAnimeList ↗</a>
       </div>
     </section>
-</div>
+    <CollectionGames v-if="gameOpen" @close="gameOpen = false" />
+  </div>
 </template>
 
 <style scoped>
@@ -103,10 +122,21 @@ const MAL_SITE = "https://myanimelist.net";
 }
 
 .about-brand__version {
+  width: fit-content;
   margin: 0;
+  padding: 0;
+  border: 0;
   font-size: 13px;
   color: var(--muted);
+  background: transparent;
   font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  cursor: default;
+}
+
+.about-brand__version:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  outline-offset: 3px;
 }
 
 .about-meta {

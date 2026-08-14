@@ -17,6 +17,7 @@
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2.5.4",
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "pixi-live2d-display": "^0.5.0-beta",
     "pixi.js": "^7.3.0",
     "vue": "^3.5.39"

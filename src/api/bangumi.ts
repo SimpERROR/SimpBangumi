@@ -23,10 +23,10 @@ export interface OAuthExchangeCodeRequest {
   code: string;
 }
 
-export interface OAuthLoginStatus {
+export interface OAuthFinishStatus {
   completed: boolean;
-  code?: string | null;
-  code_verifier?: string | null;
+  authorized: boolean;
+  session?: AuthSession | null;
   error?: string | null;
 }
 
@@ -43,11 +43,6 @@ export interface WebCookieValidationStatus {
   configured: boolean;
   valid: boolean;
   reason?: string | null;
-}
-
-export interface WorkerOAuthTokenRequest {
-  access_token: string;
-  refresh_token?: string | null;
 }
 
 export interface PageParams {
@@ -368,6 +363,72 @@ export interface CharacterPerson {
   staff?: string;
 }
 
+export interface UserCharacterCollection {
+  id: number;
+  name: string;
+  type: number;
+  images?: Record<string, string | undefined>;
+  created_at: string;
+}
+
+export interface UserPersonCollection {
+  id: number;
+  name: string;
+  type: number;
+  career: PersonCareer[];
+  images?: Record<string, string | undefined>;
+  created_at: string;
+}
+
+export interface BangumiIndex {
+  id: number;
+  title: string;
+  desc: string;
+  total: number;
+  stat: {
+    comments: number;
+    collects: number;
+  };
+  created_at: string;
+  updated_at: string;
+  creator: {
+    username: string;
+    nickname: string;
+  };
+  ban: boolean;
+  nsfw: boolean;
+}
+
+export interface IndexBasicInfo {
+  title?: string;
+  description?: string;
+}
+
+export interface IndexSubject {
+  id: number;
+  relation_id?: number;
+  prefix?: string;
+  type: number;
+  kind?: "subject" | "character" | "person" | "episode" | "blog" | "group_topic" | "subject_topic";
+  name: string;
+  images?: Record<string, string | undefined>;
+  infobox?: Array<{ key: string; value: unknown }>;
+  date?: string;
+  comment: string;
+  added_at: string;
+}
+
+export interface IndexSubjectAddInfo {
+  subject_id: number;
+  sort?: number;
+  comment?: string;
+}
+
+export interface IndexSubjectEditInfo {
+  sort?: number;
+  comment?: string;
+}
+
 export class BangumiApiClient {
   private currentUsername: string | null = null;
   private currentUsernamePromise: Promise<string> | null = null;
@@ -397,10 +458,6 @@ export class BangumiApiClient {
     return invoke<AuthSession>("bangumi_login_with_pat", { token });
   }
 
-  loginWithWorkerToken(request: WorkerOAuthTokenRequest): Promise<AuthSession> {
-    return invoke<AuthSession>("bangumi_login_with_worker_token", { request });
-  }
-
   logout(): Promise<AuthSession> {
     return invoke<AuthSession>("bangumi_logout");
   }
@@ -411,8 +468,12 @@ export class BangumiApiClient {
     }).then((response) => response.url);
   }
 
-  waitOAuthLoginResult(): Promise<OAuthLoginStatus> {
-    return invoke<OAuthLoginStatus>("bangumi_oauth_wait_login_result");
+  finishOAuthLogin(): Promise<OAuthFinishStatus> {
+    return invoke<OAuthFinishStatus>("bangumi_oauth_finish_login");
+  }
+
+  refreshOAuthSession(): Promise<AuthSession> {
+    return invoke<AuthSession>("bangumi_refresh_oauth_session");
   }
 
   async getMe(): Promise<BangumiUser> {
@@ -498,6 +559,114 @@ export class BangumiApiClient {
     return this.get<CharacterPerson[]>(`/v0/characters/${characterId}/persons`);
   }
 
+  async getUserCharacterCollections(username?: string): Promise<PagedResponse<UserCharacterCollection>> {
+    const resolvedUsername = username || await this.resolveCurrentUsername();
+    return this.get<PagedResponse<UserCharacterCollection>>(
+      `/v0/users/${encodeURIComponent(resolvedUsername)}/collections/-/characters`,
+    );
+  }
+
+  async getUserCharacterCollection(characterId: number, username?: string): Promise<UserCharacterCollection> {
+    const resolvedUsername = username || await this.resolveCurrentUsername();
+    return this.get<UserCharacterCollection>(
+      `/v0/users/${encodeURIComponent(resolvedUsername)}/collections/-/characters/${characterId}`,
+    );
+  }
+
+  collectCharacter(characterId: number): Promise<null> {
+    return this.request<null>("POST", `/v0/characters/${characterId}/collect`);
+  }
+
+  async uncollectCharacter(characterId: number): Promise<null> {
+    const path = `/v0/characters/${characterId}/collect`;
+    try {
+      return await this.request<null>("DELETE", path);
+    } catch (error) {
+      if (!isMissingApiRoute(error, path)) throw error;
+      return this.setMonoCollectedViaWeb("character", characterId, false);
+    }
+  }
+
+  async getUserPersonCollections(username?: string): Promise<PagedResponse<UserPersonCollection>> {
+    const resolvedUsername = username || await this.resolveCurrentUsername();
+    return this.get<PagedResponse<UserPersonCollection>>(
+      `/v0/users/${encodeURIComponent(resolvedUsername)}/collections/-/persons`,
+    );
+  }
+
+  async getUserPersonCollection(personId: number, username?: string): Promise<UserPersonCollection> {
+    const resolvedUsername = username || await this.resolveCurrentUsername();
+    return this.get<UserPersonCollection>(
+      `/v0/users/${encodeURIComponent(resolvedUsername)}/collections/-/persons/${personId}`,
+    );
+  }
+
+  collectPerson(personId: number): Promise<null> {
+    return this.request<null>("POST", `/v0/persons/${personId}/collect`);
+  }
+
+  async uncollectPerson(personId: number): Promise<null> {
+    const path = `/v0/persons/${personId}/collect`;
+    try {
+      return await this.request<null>("DELETE", path);
+    } catch (error) {
+      if (!isMissingApiRoute(error, path)) throw error;
+      return this.setMonoCollectedViaWeb("person", personId, false);
+    }
+  }
+
+  createIndex(): Promise<BangumiIndex> {
+    return this.request<BangumiIndex>("POST", "/v0/indices");
+  }
+
+  getIndex(indexId: number): Promise<BangumiIndex> {
+    return this.get<BangumiIndex>(`/v0/indices/${indexId}`);
+  }
+
+  editIndex(indexId: number, payload: IndexBasicInfo): Promise<BangumiIndex> {
+    return this.request<BangumiIndex>("PUT", `/v0/indices/${indexId}`, undefined, payload);
+  }
+
+  deleteIndex(indexId: number): Promise<null> {
+    return this.request<null>("DELETE", `/v0/indices/${indexId}`);
+  }
+
+  getIndexSubjects(
+    indexId: number,
+    params: PageParams & { type?: number } = {},
+  ): Promise<PagedResponse<IndexSubject> | IndexSubject[]> {
+    return this.get<PagedResponse<IndexSubject> | IndexSubject[]>(
+      `/v0/indices/${indexId}/subjects`,
+      toQuery({ limit: params.limit, offset: params.offset, type: params.type }),
+    );
+  }
+
+  addSubjectToIndex(indexId: number, payload: IndexSubjectAddInfo): Promise<null> {
+    return this.request<null>("POST", `/v0/indices/${indexId}/subjects`, undefined, payload);
+  }
+
+  editIndexSubject(indexId: number, subjectId: number, payload: IndexSubjectEditInfo): Promise<null> {
+    return this.request<null>("PUT", `/v0/indices/${indexId}/subjects/${subjectId}`, undefined, payload);
+  }
+
+  deleteIndexSubject(indexId: number, subjectId: number): Promise<null> {
+    return this.request<null>("DELETE", `/v0/indices/${indexId}/subjects/${subjectId}`);
+  }
+
+  collectIndex(indexId: number): Promise<null> {
+    return this.request<null>("POST", `/v0/indices/${indexId}/collect`);
+  }
+
+  async uncollectIndex(indexId: number): Promise<null> {
+    const path = `/v0/indices/${indexId}/collect`;
+    try {
+      return await this.request<null>("DELETE", path);
+    } catch (error) {
+      if (!isBrokenIndexUncollectRoute(error, path)) throw error;
+      return invoke<null>("bangumi_set_index_collected", { indexId, collected: false });
+    }
+  }
+
   fetchSubjectCommentsPage(
     subjectId: number,
     interestType?: SubjectCommentInterestType,
@@ -518,6 +687,53 @@ export class BangumiApiClient {
     return invoke<string>("bangumi_fetch_mono_comments_page", {
       monoType,
       monoId,
+      page,
+    });
+  }
+
+  setMonoCollectedViaWeb(monoType: MonoType, monoId: number, collected: boolean): Promise<null> {
+    return invoke<null>("bangumi_set_mono_collected", {
+      monoType,
+      monoId,
+      collected,
+    });
+  }
+
+  fetchUserIndicesPage(username: string, collected = false, page = 1): Promise<string> {
+    return invoke<string>("bangumi_fetch_user_indices_page", {
+      username,
+      collected,
+      page,
+    });
+  }
+
+  fetchIndexPage(indexId: number): Promise<string> {
+    return invoke<string>("bangumi_fetch_index_page", { indexId });
+  }
+  fetchSubjectPage(subjectId: number): Promise<string> {
+    return invoke<string>("bangumi_fetch_subject_page", { subjectId });
+  }
+
+  fetchAnimeBrowserPage(sort: "trends" | "rank", page = 1): Promise<string> {
+    return invoke<string>("bangumi_fetch_anime_browser_page", { sort, page });
+  }
+
+  addIndexEntityViaWeb(
+    indexId: number,
+    entityType: MonoType,
+    entityId: number,
+  ): Promise<null> {
+    return invoke<null>("bangumi_add_index_entity", {
+      indexId,
+      entityType,
+      entityId,
+    });
+  }
+
+  fetchUserMonoCollectionsPage(username: string, monoType: MonoType, page = 1): Promise<string> {
+    return invoke<string>("bangumi_fetch_user_mono_collections_page", {
+      username,
+      monoType,
       page,
     });
   }
@@ -680,6 +896,20 @@ export class BangumiApiClient {
 }
 
 export const bangumiApi = new BangumiApiClient();
+
+function isMissingApiRoute(error: unknown, path: string): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("404 Not Found")
+    && message.includes(`\"path\":\"${path}\"`)
+    && message.includes("This is default response");
+}
+
+function isBrokenIndexUncollectRoute(error: unknown, path: string): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("500 Internal Server Error")
+    && message.includes(`\"path\":\"${path}\"`)
+    && (message.includes("delete index collect failed") || message.includes("DELETE command denied"));
+}
 
 function toQuery(
   values: Record<string, string | number | boolean | undefined>,

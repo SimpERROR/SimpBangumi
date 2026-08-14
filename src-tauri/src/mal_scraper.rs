@@ -28,7 +28,10 @@ pub async fn scrape_anime(mal_id: u64) -> Result<MalAnimeInfo, String> {
 
     let response = client
         .get(&url)
-        .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header(
+            reqwest::header::ACCEPT,
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
         .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
         .send()
         .await
@@ -75,8 +78,7 @@ fn parse_mal_html(html: &str, mal_id: u64) -> Result<MalAnimeInfo, String> {
 
     let status = extract_sidebar_value(html, "Status:");
     let episodes_str = extract_sidebar_value(html, "Episodes:");
-    let episodes = episodes_str
-        .and_then(|s| s.trim().parse::<u32>().ok());
+    let episodes = episodes_str.and_then(|s| s.trim().parse::<u32>().ok());
 
     let duration = extract_sidebar_value(html, "Duration:");
 
@@ -132,12 +134,7 @@ fn extract_page_title(html: &str) -> Option<String> {
     let end = after.find("</title>")?;
     let raw = after[..end].trim().to_string();
     // MAL titles are like "Anime Name - MyAnimeList.net"
-    let title = raw
-        .split(" - ")
-        .next()
-        .unwrap_or(&raw)
-        .trim()
-        .to_string();
+    let title = raw.split(" - ").next().unwrap_or(&raw).trim().to_string();
     if title.is_empty() || title.len() < 2 {
         None
     } else {
@@ -189,7 +186,10 @@ fn extract_sidebar_value(html: &str, label: &str) -> Option<String> {
     crate::log_info(&format!(
         "mal_scrape: label=\"{}\" raw_fragment=\"{}\"",
         label,
-        raw.chars().take(300).collect::<String>().replace('\n', "\\n")
+        raw.chars()
+            .take(300)
+            .collect::<String>()
+            .replace('\n', "\\n")
     ));
     let cleaned = strip_html_tags(raw).trim().to_string();
 
@@ -271,10 +271,20 @@ fn parse_broadcast(raw: &Option<String>) -> (Option<String>, Option<String>) {
 }
 
 const DAY_NAMES: &[&str] = &[
-    "Mondays", "Tuesdays", "Wednesdays", "Thursdays",
-    "Fridays", "Saturdays", "Sundays",
-    "Monday", "Tuesday", "Wednesday", "Thursday",
-    "Friday", "Saturday", "Sunday",
+    "Mondays",
+    "Tuesdays",
+    "Wednesdays",
+    "Thursdays",
+    "Fridays",
+    "Saturdays",
+    "Sundays",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 ];
 
 /// Parse "Jan 7, 2024" to "2024-01-07"
@@ -285,9 +295,18 @@ fn parse_date_str(s: &str) -> Option<String> {
     }
 
     let months: &[(&str, u32)] = &[
-        ("Jan", 1), ("Feb", 2), ("Mar", 3), ("Apr", 4),
-        ("May", 5), ("Jun", 6), ("Jul", 7), ("Aug", 8),
-        ("Sep", 9), ("Oct", 10), ("Nov", 11), ("Dec", 12),
+        ("Jan", 1),
+        ("Feb", 2),
+        ("Mar", 3),
+        ("Apr", 4),
+        ("May", 5),
+        ("Jun", 6),
+        ("Jul", 7),
+        ("Aug", 8),
+        ("Sep", 9),
+        ("Oct", 10),
+        ("Nov", 11),
+        ("Dec", 12),
     ];
 
     for &(abbr, num) in months {

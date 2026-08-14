@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { clearAllTenraiCache } from "../../utils/animeMatch";
-import { useAppStore } from "../../stores/app";
+import { NSFW_FIRST_NOTICE_SEEN_KEY, useAppStore } from "../../stores/app";
 import {
   exportDiagnostics,
   getFrontendLogCount,
@@ -30,6 +30,14 @@ import {
   calculateBroadcast,
   type BroadcastTiming,
 } from "../../utils/broadcastTiming";
+import {
+  clearCollectionGameHighScore,
+  clearQuizMaliciousAnalysis,
+  MEMORY_GAME_HIGH_SCORE_KEY,
+  QUIZ_GAME_HIGH_SCORES_KEY,
+  QUIZ_MALICIOUS_ANALYSIS_KEY,
+  type CollectionGameScoreKind,
+} from "../../utils/collectionGameScores";
 
 const appStore = useAppStore();
 const bangumi = useBangumi();
@@ -48,6 +56,10 @@ const DEBUG_SCORE_KEY = "bangumi.Tenrai.debugScore";
 
 const clearing = ref(false);
 const debugScore = ref(localStorage.getItem(DEBUG_SCORE_KEY) === "1");
+const nsfwFirstNoticeSeen = ref(localStorage.getItem(NSFW_FIRST_NOTICE_SEEN_KEY) === "1");
+const memoryGameScorePresent = ref(localStorage.getItem(MEMORY_GAME_HIGH_SCORE_KEY) !== null);
+const quizGameScorePresent = ref(localStorage.getItem(QUIZ_GAME_HIGH_SCORES_KEY) !== null);
+const quizMaliciousAnalysisPresent = ref(localStorage.getItem(QUIZ_MALICIOUS_ANALYSIS_KEY) !== null);
 
 const notifyEnabled = ref(localStorage.getItem("bangumi.broadcast.notifyEnabled") === "1");
 const notifyBeforeMin = ref(Number(localStorage.getItem("bangumi.broadcast.notifyBeforeMinutes")) || 5);
@@ -67,6 +79,7 @@ watch(notifyDelayMin, (val) => {
 });
 
 const showExportConfirm = ref(false);
+const strictPrivacyMode = ref(false);
 const exporting = ref(false);
 const exportResultPath = ref<string | null>(null);
 const exportError = ref<string | null>(null);
@@ -88,9 +101,32 @@ async function handleClearTenraiCache() {
   clearing.value = false;
 }
 
+function handleClearNsfwFirstNotice() {
+  localStorage.removeItem(NSFW_FIRST_NOTICE_SEEN_KEY);
+  nsfwFirstNoticeSeen.value = false;
+  appStore.showToast("已清除 NSFW 互动说明的展示记录，下次触发时将再次显示。", "success");
+}
+
+function handleClearCollectionGameScore(kind: CollectionGameScoreKind) {
+  clearCollectionGameHighScore(kind);
+  if (kind === "memory") memoryGameScorePresent.value = false;
+  else quizGameScorePresent.value = false;
+  appStore.showToast(
+    `已清除${kind === "memory" ? "封面记忆翻牌" : "封面猜番"}的本地最高分。`,
+    "success",
+  );
+}
+
+function handleClearQuizMaliciousAnalysis() {
+  clearQuizMaliciousAnalysis();
+  quizMaliciousAnalysisPresent.value = false;
+  appStore.showToast("已清除恶意难度的本地行为分析数据，不影响最高分与解锁进度。", "success");
+}
+
 function handleStartExport() {
   exportError.value = null;
   exportResultPath.value = null;
+  strictPrivacyMode.value = false;
   showExportConfirm.value = true;
 }
 
@@ -105,7 +141,7 @@ async function handleConfirmExport() {
   exportResultPath.value = null;
 
   try {
-    const filePath = await exportDiagnostics();
+    const filePath = await exportDiagnostics(strictPrivacyMode.value);
     exportResultPath.value = filePath;
     appStore.showToast("诊断信息已导出。", "success");
   } catch (error) {
@@ -443,6 +479,50 @@ function handleEnableNotify() {
       </div>
 
       <div class="settings-card__subsection">
+        <h4 class="settings-card__subtitle">看板娘互动说明</h4>
+        <p class="settings-card__hint">
+          {{ nsfwFirstNoticeSeen
+            ? "首次 NSFW 互动说明已展示。清除后，下次触发此类互动时会再次显示。"
+            : "当前没有 NSFW 互动说明的展示记录。" }}
+        </p>
+        <button
+          class="secondary-button"
+          type="button"
+          :disabled="!nsfwFirstNoticeSeen"
+          style="justify-self: start;"
+          @click="handleClearNsfwFirstNotice"
+        >
+          清除展示记录
+        </button>
+      </div>
+
+      <div class="settings-card__subsection">
+        <h4 class="settings-card__subtitle">收藏小游戏成绩</h4>
+        <p class="settings-card__hint">分别清除两个收藏小游戏保存在当前设备上的最高分，不影响收藏与其他设置。</p>
+        <div class="settings-card__actions">
+          <button
+            class="secondary-button"
+            type="button"
+            :disabled="!memoryGameScorePresent"
+            @click="handleClearCollectionGameScore('memory')"
+          >清除翻牌成绩</button>
+          <button
+            class="secondary-button"
+            type="button"
+            :disabled="!quizGameScorePresent"
+            @click="handleClearCollectionGameScore('quiz')"
+          >清除猜番成绩</button>
+          <button
+            class="secondary-button"
+            type="button"
+            :disabled="!quizMaliciousAnalysisPresent"
+            @click="handleClearQuizMaliciousAnalysis"
+          >清除恶意分析</button>
+        </div>
+        <p class="settings-card__hint">恶意难度的点击位置、鼠标轨迹派生特征、反应时间与诱饵偏好分析只保存在当前设备；清除后会重新学习，不影响恶意难度解锁状态。</p>
+      </div>
+
+      <div class="settings-card__subsection">
         <h4 class="settings-card__subtitle">诊断信息</h4>
         <p class="settings-card__hint">
           生成包含应用日志、系统与应用版本、认证状态、网络连通性及日志截断摘要的诊断报告。
@@ -701,19 +781,43 @@ function handleEnableNotify() {
     </p>
 
     <!-- 导出确认对话框 -->
-    <div v-if="showExportConfirm" class="overlay" role="dialog" aria-modal="true" aria-label="导出诊断信息" @click.self="handleCancelExport">
-      <section class="modal">
-        <h3>导出诊断信息</h3>
-        <p>诊断信息将用于帮助我们排查软件运行中的异常。导出的文件可能包含：应用日志、系统与应用版本、网络连通性、认证状态以及日志截断摘要。身份信息与凭据会在导出前<strong>脱敏</strong>。</p>
-        <p>即使经过脱敏，但为了您的隐私安全，请勿将敏感 Token 或个人隐私公开上传到公共讨论区。</p>
-        <p>多数敏感信息将在导出前被自动脱敏处理。您亦可以在使用前，自行审阅并编辑本文件。</p>
-        <p>导出期间弹出命令行窗口是正常程序行为。除非您手动上传，生成的诊断文件不会因 SimpBangumi 而离开您的电脑。</p>
-        <div class="modal__actions">
-          <button class="secondary-button" type="button" @click="handleCancelExport">取消</button>
-          <button class="primary-button" type="button" @click="handleConfirmExport">确认导出</button>
-        </div>
-      </section>
-    </div>
+    <Transition name="export-modal">
+      <div v-if="showExportConfirm" class="overlay" role="dialog" aria-modal="true" aria-label="导出诊断信息" @click.self="handleCancelExport">
+        <section class="modal export-modal-card">
+          <header class="export-modal__header">
+            <div>
+              <p class="export-modal__eyebrow">开发者工具</p>
+              <h3>导出诊断信息</h3>
+            </div>
+            <button class="export-modal__close" type="button" aria-label="关闭" @click="handleCancelExport">×</button>
+          </header>
+
+          <p class="export-modal__intro">生成一份用于排查运行异常的诊断报告。文件仅保存在本机，除非您主动上传，否则不会离开您的电脑。</p>
+
+          <div class="export-modal__scope">
+            <span class="export-modal__scope-title">报告可能包含</span>
+            <span>应用日志 · 系统与版本信息 · 网络连通性 · 认证状态 · 日志截断摘要</span>
+          </div>
+
+          <section class="export-privacy-option" :class="{ 'is-enabled': strictPrivacyMode }">
+            <label class="toggle-row">
+              <span class="toggle-row__label">严格隐私模式</span>
+              <input v-model="strictPrivacyMode" class="toggle-row__input" type="checkbox" role="switch" />
+              <span class="toggle-row__track" />
+            </label>
+            <p class="export-privacy-option__hint">隐藏报告中的条目 ID，适合分享前使用。</p>
+            <p v-if="strictPrivacyMode" class="export-privacy-warning">此模式可能无法脱敏所有敏感信息，仍需您自行审阅导出的文件。</p>
+          </section>
+
+          <p class="export-modal__review-note"><strong>请在使用前审阅文件。</strong>多数敏感信息会自动脱敏，但请勿将包含敏感 Token 或个人隐私的日志公开上传。</p>
+
+          <div class="modal__actions export-modal__actions">
+            <button class="secondary-button" type="button" @click="handleCancelExport">取消</button>
+            <button class="primary-button" type="button" @click="handleConfirmExport">确认导出</button>
+          </div>
+        </section>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -722,6 +826,141 @@ function handleEnableNotify() {
   font-size: 13px;
   color: var(--text);
   white-space: nowrap;
+}
+
+.export-privacy-option {
+  display: grid;
+  gap: 5px;
+  margin: 2px 0 0;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+  transition: border-color 180ms ease, background 180ms ease;
+}
+
+.export-privacy-option.is-enabled {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.export-modal-card {
+  gap: 16px;
+  padding: 22px;
+}
+
+.export-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.export-modal__eyebrow {
+  margin: 0 0 3px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.export-modal__header h3 {
+  margin: 0;
+}
+
+.export-modal__close {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.export-modal__close:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.export-modal__intro,
+.export-modal__review-note,
+.export-privacy-option__hint,
+.export-privacy-warning {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.export-modal__intro {
+  color: var(--text) !important;
+}
+
+.export-modal__scope {
+  display: grid;
+  gap: 4px;
+  padding: 11px 13px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.export-modal__scope-title {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.export-privacy-warning {
+  padding-top: 4px;
+  color: var(--warning, #b7791f);
+  font-size: 12px;
+}
+
+.export-privacy-option__hint,
+.export-modal__review-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.export-modal__review-note {
+  padding-top: 1px;
+}
+
+.export-modal__review-note strong {
+  color: var(--text);
+}
+
+.export-modal__actions {
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.export-modal-enter-active,
+.export-modal-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.export-modal-enter-active .modal,
+.export-modal-leave-active .modal {
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.export-modal-enter-from,
+.export-modal-leave-to {
+  opacity: 0;
+}
+
+.export-modal-enter-from .modal,
+.export-modal-leave-to .modal {
+  opacity: 0;
+  transform: translateY(12px) scale(0.97);
 }
 
 .dev-followed-list {

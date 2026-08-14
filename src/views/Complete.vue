@@ -96,6 +96,7 @@ const total = ref<number | undefined>(undefined);
 const collections = ref<SubjectCollection[]>([]);
 const episodeStates = ref<Record<number, EpisodeState>>({});
 const episodeLoadTokens = ref<Record<number, number>>({});
+const episodeLoadPromises = new Map<number, Promise<void>>();
 
 let requestToken = 0;
 
@@ -394,46 +395,62 @@ function notpreferredSubjectTitle(name?: string, nameCn?: string, fallback = "")
 }
 
 async function loadEpisodeState(subjectId: number) {
-  const state = ensureEpisodeState(subjectId);
-  const loadToken = nextEpisodeLoadToken(subjectId);
-  state.episodeLoading = true;
-  state.episodeError = "";
+  const existingPromise = episodeLoadPromises.get(subjectId);
+  if (existingPromise) {
+    return existingPromise;
+  }
 
-  try {
-    const [episodeResult, userEpisodeResult] = await Promise.all([
-      bangumi.getEpisodesBySubject(subjectId, { limit: 200, offset: 0 }),
-      bangumi.getCurrentUserSubjectEpisodeCollections(subjectId, {
-        limit: 1000,
-        offset: 0,
-      }),
-    ]);
+  const loadPromise = (async () => {
+    const state = ensureEpisodeState(subjectId);
+    const loadToken = nextEpisodeLoadToken(subjectId);
+    state.episodeLoading = true;
+    state.episodeError = "";
 
-    if (!episodeResult.ok) {
-      state.episodeError = episodeResult.error;
-      return;
-    }
+    try {
+      const [episodeResult, userEpisodeResult] = await Promise.all([
+        bangumi.getEpisodesBySubject(subjectId, { limit: 200, offset: 0 }),
+        bangumi.getCurrentUserSubjectEpisodeCollections(subjectId, {
+          limit: 1000,
+          offset: 0,
+        }),
+      ]);
 
-    state.episodes = [...episodeResult.data.data].sort((left, right) => Number(left.sort ?? 0) - Number(right.sort ?? 0));
-
-    if (userEpisodeResult.ok) {
-      const mapping: Record<number, number> = {};
-      for (const item of userEpisodeResult.data.data) {
-        if (item.episode?.id) {
-          mapping[item.episode.id] = Number(item.type ?? 0);
-        }
+      if (!episodeResult.ok) {
+        state.episodeError = episodeResult.error;
+        return;
       }
 
-      state.episodeTypeById = mapping;
-    } else if (!getEpisodeCollectionNotFound(userEpisodeResult.error)) {
-      state.episodeError = userEpisodeResult.error;
+      state.episodes = [...episodeResult.data.data].sort((left, right) => Number(left.sort ?? 0) - Number(right.sort ?? 0));
+
+      if (userEpisodeResult.ok) {
+        const mapping: Record<number, number> = {};
+        for (const item of userEpisodeResult.data.data) {
+          if (item.episode?.id) {
+            mapping[item.episode.id] = Number(item.type ?? 0);
+          }
+        }
+
+        state.episodeTypeById = mapping;
+      } else if (!getEpisodeCollectionNotFound(userEpisodeResult.error)) {
+        state.episodeError = userEpisodeResult.error;
+      }
+    } catch (error) {
+      state.episodeError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (episodeLoadTokens.value[subjectId] === loadToken) {
+        state.episodeLoading = false;
+      }
     }
-  } catch (error) {
-    state.episodeError = error instanceof Error ? error.message : String(error);
-  } finally {
-    if (episodeLoadTokens.value[subjectId] === loadToken) {
-      state.episodeLoading = false;
+  })();
+
+  episodeLoadPromises.set(subjectId, loadPromise);
+  void loadPromise.finally(() => {
+    if (episodeLoadPromises.get(subjectId) === loadPromise) {
+      episodeLoadPromises.delete(subjectId);
     }
-  }
+  });
+
+  return loadPromise;
 }
 
 async function fetchInProgressCollections() {

@@ -1,8 +1,25 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref } from "vue";
+import { computed, defineAsyncComponent, onMounted, ref } from "vue";
 import PrivacyDataComplianceSettings from "./PrivacyDataComplianceSettings.vue";
 import OAuthSecurityComplianceSettings from "./OAuthSecurityComplianceSettings.vue";
 const IntellectualPropertyLicenseSettings = defineAsyncComponent(() => import("./IntellectualPropertyLicenseSettings.vue"));
+
+function preloadLegalCompliancePages() {
+  const preloadTasks = [
+    import("./IntellectualPropertyLicenseSettings.vue"),
+  ];
+
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(() => {
+      void Promise.allSettled(preloadTasks);
+    });
+    return;
+  }
+
+  setTimeout(() => {
+    void Promise.allSettled(preloadTasks);
+  }, 150);
+}
 
 type CompliancePage = "home" | "privacy-data" | "oauth-security" | "intellectual-property";
 
@@ -17,6 +34,10 @@ const pageTitle = computed(() => {
 function openPage(page: Exclude<CompliancePage, "home">) {
   activePage.value = page;
 }
+
+onMounted(() => {
+  preloadLegalCompliancePages();
+});
 </script>
 
 <template>
@@ -28,12 +49,12 @@ function openPage(page: Exclude<CompliancePage, "home">) {
       </div>
 
       <div v-if="activePage === 'home'" class="onboarding__panel settings-page">
-        <p class="onboarding__description">查看与本应用相关的数据处理、安全机制、知识产权和开源许可说明。</p>
+        <p class="onboarding__description">查看与本应用相关的数据处理、安全机制、可选小游戏分析、知识产权和开源许可说明。</p>
         <div class="settings-entry-list">
           <button class="item item--button settings-entry" type="button" @click="openPage('privacy-data')">
             <div class="settings-entry__content">
               <h3>隐私与数据处理</h3>
-              <p>了解必要数据、数据用途与第三方服务。</p>
+              <p>了解必要数据、本地小游戏分析、数据控制与第三方服务。</p>
             </div>
             <span class="settings-entry__chevron" aria-hidden="true">></span>
           </button>

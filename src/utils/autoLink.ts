@@ -47,9 +47,10 @@ export function autoLinkPlainText(text: string): string {
  * Existing <a> tags are preserved unchanged.
  */
 export function autoLinkInHtml(html: string): string {
-  // Temporarily protect existing <a> tags from modification
+  // Temporarily protect existing links and image elements from modification.
+  // URLs inside an img src attribute must not be converted into nested anchors.
   const preserved: string[] = [];
-  const protectedHtml = html.replace(/<a\s[^>]*>[\s\S]*?<\/a>/gi, (match) => {
+  const protectedHtml = html.replace(/<a\s[^>]*>[\s\S]*?<\/a>|<img\s[^>]*>/gi, (match) => {
     preserved.push(match);
     return `\x00LINK\x01${preserved.length - 1}\x02`;
   });

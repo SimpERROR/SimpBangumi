@@ -115,7 +115,7 @@ export function getFrontendLogCount(): number {
  * Invoke the Rust backend to generate a diagnostics report file.
  * Returns the file path where the report was written.
  */
-export async function exportDiagnostics(): Promise<string> {
+export async function exportDiagnostics(strictPrivacyMode = false): Promise<string> {
   const frontendLogs = getFrontendLogsForExport();
   const filePath: string = await invoke("export_diagnostics", {
     frontendErrors: frontendLogs.length > 0 ? frontendLogs : null,
@@ -124,6 +124,7 @@ export async function exportDiagnostics(): Promise<string> {
       dropped: droppedLogCount,
       capacity: MAX_LOGS,
     },
+    strictPrivacyMode,
   });
   return filePath;
 }

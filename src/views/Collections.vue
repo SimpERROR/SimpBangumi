@@ -28,6 +28,9 @@ import type {
   UserSubjectCollection,
 } from "../api/bangumi";
 
+const emit = defineEmits<{
+  detailClosed: [];
+}>();
 const appStore = useAppStore();
 const sessionStore = useSessionStore();
 const dataStore = useDataStore();
@@ -183,6 +186,8 @@ const COLLECTION_DIFF_EMPHASIS_KEY = "bangumi.detail.collection.diff.emphasis";
 
 const detailOpen = ref(false);
 const detailLoading = ref(false);
+const detailLoadingProgress = ref(0);
+const detailLoadingMessage = ref("正在准备详情...");
 const detailError = ref("");
 const detail = ref<SubjectDetail | null>(null);
 const preDetailLoading = ref(false);
@@ -254,6 +259,8 @@ watch(detailLoading, (loading) => {
 const imagePreviewUrl = ref("");
 const imagePreviewTitle = ref("");
 const detailContentRef = ref<HTMLElement | null>(null);
+const subjectCommentBoxRef = ref<HTMLElement | null>(null);
+const characterCommentBoxRef = ref<HTMLElement | null>(null);
 const showDetailBackToTop = ref(false);
 const relatedCharacters = ref<RelatedCharacter[]>([]);
 const relatedCharactersError = ref("");
@@ -277,12 +284,17 @@ const comments = ref<Array<{
 const personDetailLoading = ref(false);
 const personDetailError = ref("");
 const personDetail = ref<PersonDetail | null>(null);
+const personCollected = ref<boolean | null>(null);
+const personCollectionSaving = ref(false);
 const characterDetailLoading = ref(false);
 const characterDetailError = ref("");
 const characterDetail = ref<CharacterDetail | null>(null);
+const characterCollected = ref<boolean | null>(null);
+const characterCollectionSaving = ref(false);
 const characterRelatedPersons = ref<CharacterPerson[]>([]);
 const characterRelatedPersonsLoading = ref(false);
 const characterRelatedPersonsVisible = ref(6);
+const monoOpenedFromSubject = ref(false);
 
 watch(personDetailLoading, (loading) => {
   if (!loading && personDetail.value) {
@@ -328,6 +340,13 @@ const collectionSaving = ref(false);
 const collectionError = ref("");
 const collectionSavedMessage = ref("");
 const collectionUpdatedAt = ref("");
+const savedCollectionType = ref(0);
+interface SubjectIndexOption { id: number; title: string; description: string; total: number; }
+const indexPickerOpen = ref(false);
+const indexPickerLoading = ref(false);
+const indexPickerError = ref("");
+const indexPickerItems = ref<SubjectIndexOption[]>([]);
+const indexPickerSavingId = ref<number | null>(null);
 const episodeLoading = ref(false);
 const episodeError = ref("");
 const episodeSavingId = ref<number | null>(null);
@@ -1049,12 +1068,14 @@ function resetPersonDetail() {
   personDetailLoading.value = false;
   personDetailError.value = "";
   personDetail.value = null;
+  personCollected.value = null;
 }
 
 function resetCharacterDetail() {
   characterDetailLoading.value = false;
   characterDetailError.value = "";
   characterDetail.value = null;
+  characterCollected.value = null;
   characterRelatedPersons.value = [];
   characterRelatedPersonsLoading.value = false;
   characterRelatedPersonsVisible.value = 6;
@@ -1065,8 +1086,13 @@ async function openPersonDetail(personId: number) {
     return;
   }
 
+  if (detailPage.value !== "person" && detailPage.value !== "character") {
+    monoOpenedFromSubject.value = detailOpen.value && detailPage.value === "subject";
+  }
   detailOpen.value = true;
   personDetailLoading.value = true;
+  detailLoadingProgress.value = 5;
+  detailLoadingMessage.value = "正在读取人物详情...";
   personDetailError.value = "";
   personDetail.value = null;
   detailPage.value = "person";
@@ -1084,7 +1110,13 @@ async function openPersonDetail(personId: number) {
   }
 
   personDetail.value = result.data;
+  detailLoadingProgress.value = 100;
+  detailLoadingMessage.value = "人物详情加载完成";
   personDetailLoading.value = false;
+  if (sessionStore.authenticated.value) {
+    const collectionResult = await bangumi.isPersonCollected(personId);
+    if (collectionResult.ok) personCollected.value = collectionResult.data;
+  }
 }
 
 async function openCharacterDetail(characterId: number) {
@@ -1092,8 +1124,13 @@ async function openCharacterDetail(characterId: number) {
     return;
   }
 
+  if (detailPage.value !== "person" && detailPage.value !== "character") {
+    monoOpenedFromSubject.value = detailOpen.value && detailPage.value === "subject";
+  }
   detailOpen.value = true;
   characterDetailLoading.value = true;
+  detailLoadingProgress.value = 5;
+  detailLoadingMessage.value = "正在读取角色详情...";
   characterDetailError.value = "";
   characterDetail.value = null;
   detailPage.value = "character";
@@ -1111,7 +1148,13 @@ async function openCharacterDetail(characterId: number) {
   }
 
   characterDetail.value = result.data;
+  detailLoadingProgress.value = 70;
+  detailLoadingMessage.value = "正在加载角色关联人物...";
   characterDetailLoading.value = false;
+  if (sessionStore.authenticated.value) {
+    const collectionResult = await bangumi.isCharacterCollected(characterId);
+    if (collectionResult.ok) characterCollected.value = collectionResult.data;
+  }
 
   // 加载关联人物
   characterRelatedPersonsLoading.value = true;
@@ -1122,10 +1165,96 @@ async function openCharacterDetail(characterId: number) {
   }
 
   characterRelatedPersonsLoading.value = false;
+  detailLoadingProgress.value = 100;
+  detailLoadingMessage.value = "角色详情加载完成";
 }
 
+async function togglePersonCollection() {
+  if (!personDetail.value || personCollectionSaving.value || personCollected.value === null) return;
+  const nextCollected = !personCollected.value;
+  personCollectionSaving.value = true;
+  const result = await bangumi.setPersonCollected(personDetail.value.id, nextCollected);
+  personCollectionSaving.value = false;
+  if (!result.ok) {
+    appStore.showToast(`收藏操作失败：${result.error}`, "error");
+    return;
+  }
+  personCollected.value = nextCollected;
+  personDetail.value.stat.collects = Math.max(0, personDetail.value.stat.collects + (nextCollected ? 1 : -1));
+  appStore.showToast(nextCollected ? "已收藏人物。" : "已取消收藏人物。", "success");
+}
+
+async function toggleCharacterCollection() {
+  if (!characterDetail.value || characterCollectionSaving.value || characterCollected.value === null) return;
+  const nextCollected = !characterCollected.value;
+  characterCollectionSaving.value = true;
+  const result = await bangumi.setCharacterCollected(characterDetail.value.id, nextCollected);
+  characterCollectionSaving.value = false;
+  if (!result.ok) {
+    appStore.showToast(`收藏操作失败：${result.error}`, "error");
+    return;
+  }
+  characterCollected.value = nextCollected;
+  characterDetail.value.stat.collects = Math.max(0, characterDetail.value.stat.collects + (nextCollected ? 1 : -1));
+  appStore.showToast(nextCollected ? "已收藏角色。" : "已取消收藏角色。", "success");
+}
+
+function parseSubjectIndexPage(html: string): SubjectIndexOption[] {
+  if (!html.trim()) return [];
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const indexed = new Map<number, SubjectIndexOption>();
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('a[href*="/index/"]')) {
+    const matchedId = link.getAttribute("href")?.match(/\/index\/(\d+)/)?.[1];
+    if (!matchedId) continue;
+    const id = Number(matchedId);
+    const element = link.closest("li, article, .item, .index-item") || link.parentElement;
+    if (!element) continue;
+    const titleLink = Array.from(element.querySelectorAll<HTMLAnchorElement>(`a[href*="/index/${id}"]`)).find((candidate) => candidate.textContent?.trim());
+    const title = titleLink?.textContent?.trim() || link.getAttribute("title")?.trim() || "";
+    if (!title) continue;
+    const numbers = Array.from(element.querySelectorAll<HTMLElement>(".stats .num, .num")).map((node) => Number(node.textContent?.trim())).filter(Number.isFinite);
+    indexed.set(id, { id, title, description: element.querySelector(".desc, .description, .tip_j")?.textContent?.trim() || "", total: numbers.reduce((sum, value) => sum + value, 0) });
+  }
+  return [...indexed.values()];
+}
+
+async function openIndexPicker() {
+  detailMoreMenuOpen.value = false;
+  if (!sessionStore.authenticated.value || !currentUsername.value || indexPickerLoading.value) return;
+  indexPickerOpen.value = true; indexPickerLoading.value = true; indexPickerError.value = ""; indexPickerItems.value = [];
+  try {
+    const items: SubjectIndexOption[] = [];
+    for (let page = 1; page <= 20; page += 1) {
+      const result = await bangumi.fetchUserIndicesPage(currentUsername.value, false, page);
+      if (!result.ok) { indexPickerError.value = result.error; break; }
+      items.push(...parseSubjectIndexPage(result.data));
+      const document = new DOMParser().parseFromString(result.data, "text/html");
+      const hasNext = Array.from(document.querySelectorAll<HTMLAnchorElement>('.page_inner a[href*="page="]')).some((link) => Number(new URL(link.href, "https://bangumi.tv").searchParams.get("page")) === page + 1);
+      if (!hasNext) break;
+    }
+    indexPickerItems.value = [...new Map(items.map((item) => [item.id, item])).values()];
+  } catch (error) { indexPickerError.value = error instanceof Error ? error.message : String(error); }
+  finally { indexPickerLoading.value = false; }
+}
+
+function closeIndexPicker() { if (indexPickerSavingId.value === null) indexPickerOpen.value = false; }
+async function addEntityToPickedIndex(indexId: number) {
+  if (indexPickerSavingId.value !== null) return;
+  const entityType = detailPage.value === "person" ? "person" : detailPage.value === "character" ? "character" : "subject";
+  const entityId = entityType === "subject" ? detail.value?.id : entityType === "person" ? personDetail.value?.id : characterDetail.value?.id;
+  if (!entityId) return;
+
+  indexPickerSavingId.value = indexId;
+  const result = entityType === "subject"
+    ? await bangumi.addSubjectToIndex(indexId, { subject_id: entityId })
+    : await bangumi.addIndexEntityViaWeb(indexId, entityType, entityId);
+  indexPickerSavingId.value = null;
+  if (!result.ok) { appStore.showToast(`加入目录失败：${result.error}`, "error"); return; }
+  indexPickerOpen.value = false;
+  appStore.showToast(`${entityType === "subject" ? "条目" : entityType === "person" ? "人物" : "角色"}已加入目录。`, "success");
+}
 function closePersonDetail() {
-  if (!detail.value) {
+  if (!monoOpenedFromSubject.value) {
     closeDetail();
     return;
   }
@@ -1135,7 +1264,7 @@ function closePersonDetail() {
 }
 
 function closeCharacterDetail() {
-  if (!detail.value) {
+  if (!monoOpenedFromSubject.value) {
     closeDetail();
     return;
   }
@@ -1468,22 +1597,24 @@ async function loadMonoComments() {
   monoCommentLoading.value = false;
 }
 
-function prevMonoCommentPage() {
+async function prevMonoCommentPage() {
   if (!canPrevMonoCommentPage.value) {
     return;
   }
 
   monoCommentPage.value -= 1;
   refreshMonoCommentsForCurrentPage();
+  await scrollCommentBoxToTop(characterCommentBoxRef);
 }
 
-function nextMonoCommentPage() {
+async function nextMonoCommentPage() {
   if (!canNextMonoCommentPage.value) {
     return;
   }
 
   monoCommentPage.value += 1;
   refreshMonoCommentsForCurrentPage();
+  await scrollCommentBoxToTop(characterCommentBoxRef);
 }
 
 function setCommentInterestTab(tab: "all" | SubjectCommentInterestType) {
@@ -1496,22 +1627,24 @@ function setCommentInterestTab(tab: "all" | SubjectCommentInterestType) {
   void loadSubjectComments();
 }
 
-function prevCommentPage() {
+async function prevCommentPage() {
   if (!canPrevCommentPage.value) {
     return;
   }
 
   commentPage.value -= 1;
-  void loadSubjectComments();
+  await loadSubjectComments();
+  await scrollCommentBoxToTop(subjectCommentBoxRef);
 }
 
-function nextCommentPage() {
+async function nextCommentPage() {
   if (!canNextCommentPage.value) {
     return;
   }
 
   commentPage.value += 1;
-  void loadSubjectComments();
+  await loadSubjectComments();
+  await scrollCommentBoxToTop(subjectCommentBoxRef);
 }
 
 async function loadSubjectRelations(subjectId: number) {
@@ -1600,6 +1733,7 @@ function collectionFromSnapshot(snapshot: SubjectCollection | null, subjectId: n
 
 function fillCollectionForm(collection: UserSubjectCollection | null) {
   form.type = collection?.type ?? 0;
+  savedCollectionType.value = form.type;
   form.rate = collection?.rate ?? 0;
   form.ep_status = collection?.ep_status ?? 0;
   form.vol_status = collection?.vol_status ?? 0;
@@ -1843,6 +1977,8 @@ async function updateEpisodeStatus(episodeId: number, nextType: number) {
 
 async function loadSubjectDetail(subjectId: number, prefetchedDetail?: SubjectDetail) {
   detailLoading.value = true;
+  detailLoadingProgress.value = prefetchedDetail ? 25 : 5;
+  detailLoadingMessage.value = prefetchedDetail ? "正在准备关联数据..." : "正在读取条目详情...";
   detailError.value = "";
   detail.value = prefetchedDetail ?? null;
   resetSubjectRelations();
@@ -1866,6 +2002,8 @@ async function loadSubjectDetail(subjectId: number, prefetchedDetail?: SubjectDe
     }
 
     detail.value = detailResult.data;
+    detailLoadingProgress.value = 25;
+    detailLoadingMessage.value = "正在加载关联数据...";
   }
 
   // 同步当前详情的 NSFW 状态到 store
@@ -1881,7 +2019,13 @@ async function loadSubjectDetail(subjectId: number, prefetchedDetail?: SubjectDe
     collectionSavedMessage.value = "";
   }
 
-  await Promise.all(tasks);
+  let completedTasks = 0;
+  await Promise.all(tasks.map(async (task) => {
+    await task;
+    completedTasks += 1;
+    detailLoadingProgress.value = 25 + Math.round((completedTasks / tasks.length) * 75);
+    detailLoadingMessage.value = completedTasks === tasks.length ? "详情加载完成" : `正在加载详情数据（${completedTasks}/${tasks.length}）...`;
+  }));
 
   detailLoading.value = false;
 
@@ -2007,10 +2151,12 @@ function closeDetail() {
   resetMonoComments();
   monoDetailTab.value = "info";
   detailPage.value = "subject";
+  monoOpenedFromSubject.value = false;
   // 退出 NSFW 详情 → 触发看板娘对话
   if (wasNsfw) {
     appStore.nsfwExitTriggerCounter.value++;
   }
+  emit("detailClosed");
 }
 
 watch([detailTab, detailPage, () => detail.value?.id], () => {
@@ -2038,6 +2184,20 @@ watch([monoDetailTab, detailPage, () => personDetail.value?.id, () => characterD
   void loadMonoComments();
 });
 
+async function scrollCommentBoxToTop(commentBoxRef: typeof subjectCommentBoxRef) {
+  await nextTick();
+
+  const container = detailContentRef.value;
+  const commentBox = commentBoxRef.value;
+  if (!container || !commentBox) {
+    return;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const commentBoxRect = commentBox.getBoundingClientRect();
+  const top = container.scrollTop + commentBoxRect.top - containerRect.top;
+  container.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+}
 function onDetailScroll(event: Event) {
   const target = event.target;
   if (!(target instanceof HTMLElement)) {
@@ -2050,6 +2210,10 @@ function onDetailScroll(event: Event) {
 // 同步「回到顶部」按钮可见性到 store，供 Live2D 看板娘避让
 watch(showDetailBackToTop, (v) => {
   appStore.detailBackToTopVisible.value = v;
+});
+
+watch(detailOpen, (v) => {
+  appStore.detailDrawerOpen.value = v;
 });
 
 function scrollDetailToTop() {
@@ -2123,6 +2287,7 @@ function cancelNsfw() {
   nsfwDialog.pendingSubjectId = null;
   pendingNsfwDetail.value = null;
   appStore.nsfwWarningVisible.value = false;
+  emit("detailClosed");
 }
 
 async function saveCollectionStatus() {
@@ -2149,7 +2314,13 @@ async function saveCollectionStatus() {
     payload.ep_status = form.ep_status;
   }
 
-  const result = await bangumi.updateCurrentUserSubjectCollection(detail.value.id, payload);
+  const subjectId = detail.value.id;
+  const shouldMarkAllEpisodesSeen =
+    appStore.autoMarkEpisodesSeen.value &&
+    subjectSupportsEpisodeProgress.value &&
+    savedCollectionType.value !== 2 &&
+    form.type === 2;
+  const result = await bangumi.updateCurrentUserSubjectCollection(subjectId, payload);
 
   if (!result.ok) {
     collectionError.value = result.error;
@@ -2157,8 +2328,49 @@ async function saveCollectionStatus() {
     return;
   }
 
-  collectionSavedMessage.value = "收藏状态已更新。";
+  savedCollectionType.value = form.type;
   form.rate = payload.rate;
+
+  if (shouldMarkAllEpisodesSeen) {
+    if (episodes.value.length === 0 && !episodeLoading.value) {
+      await loadEpisodesForDetail(subjectId);
+    }
+
+    const episodesToMark = episodes.value.filter((episode) => episodeStatusType(episode.id) !== 2);
+    const results: Array<{
+      episode: Episode;
+      result: Awaited<ReturnType<typeof bangumi.updateCurrentUserEpisodeCollection>>;
+    }> = [];
+    const batchSize = 6;
+    for (let offset = 0; offset < episodesToMark.length; offset += batchSize) {
+      const batch = episodesToMark.slice(offset, offset + batchSize);
+      results.push(...await Promise.all(
+        batch.map(async (episode) => ({
+          episode,
+          result: await bangumi.updateCurrentUserEpisodeCollection(episode.id, 2),
+        })),
+      ));
+    }
+    const failed = results.filter(({ result: episodeResult }) => !episodeResult.ok);
+    const nextTypes = { ...episodeTypeById.value };
+    for (const { episode, result: episodeResult } of results) {
+      if (episodeResult.ok) {
+        nextTypes[episode.id] = 2;
+      }
+    }
+    episodeTypeById.value = nextTypes;
+    form.ep_status = Object.values(nextTypes).filter((type) => type === 2).length;
+
+    if (failed.length > 0) {
+      collectionSavedMessage.value = `收藏状态已更新；${failed.length} 集同步失败。`;
+      episodeError.value = `${failed.length} 集未能标记为「看过」，请稍后重试。`;
+    } else {
+      collectionSavedMessage.value = `收藏状态已更新，已将 ${episodesToMark.length} 集标记为「看过」。`;
+    }
+  } else {
+    collectionSavedMessage.value = "收藏状态已更新。";
+  }
+
   collectionSaving.value = false;
   // 通知看板娘
   appStore.collectionSaveSuccessCounter.value++;
@@ -2563,6 +2775,18 @@ defineExpose({
     </div>
   </Transition>
 
+  <Transition name="index-picker">
+    <div v-if="indexPickerOpen" class="index-picker-overlay" role="dialog" aria-modal="true" aria-label="加入目录" @click.self="closeIndexPicker">
+      <section class="index-picker-card">
+        <header class="index-picker-card__header"><div><h3>加入目录</h3></div><button class="secondary-button" type="button" @click="closeIndexPicker">关闭</button></header>
+        <p class="detail-muted">选择一个你创建的目录，将当前条目加入其中。</p>
+        <div v-if="indexPickerLoading" class="index-picker-state"><span class="spinner" aria-hidden="true"></span>正在读取目录...</div>
+        <p v-else-if="indexPickerError" class="onboarding__error">目录加载失败：{{ indexPickerError }}</p>
+        <div v-else-if="indexPickerItems.length" class="index-picker-list"><button v-for="item in indexPickerItems" :key="item.id" class="index-picker-item" type="button" :disabled="indexPickerSavingId !== null" @click="addEntityToPickedIndex(item.id)"><span><strong>{{ item.title }}</strong><small>{{ item.total }} 个条目<span v-if="item.description"> · {{ item.description }}</span></small></span><span class="index-picker-item__action">{{ indexPickerSavingId === item.id ? "加入中..." : "加入" }}</span></button></div>
+        <p v-else class="empty">暂无可用目录，请先在“收藏 → 目录”中创建。</p>
+      </section>
+    </div>
+  </Transition>
   <Transition name="drawer">
     <div v-if="detailOpen" class="drawer-backdrop">
       <div class="drawer-overlay" @click="closeDetail"></div>
@@ -2602,7 +2826,8 @@ defineExpose({
           >
             …
           </button>
-          <div v-if="detailMoreMenuOpen" class="detail-more-menu__dropdown">
+          <Transition name="detail-menu"><div v-if="detailMoreMenuOpen" class="detail-more-menu__dropdown">
+            <button v-if="sessionStore.authenticated.value && ['subject', 'person', 'character'].includes(detailPage)" class="detail-more-menu__item" type="button" @click="openIndexPicker">加入目录</button>
             <template v-if="detailPage === 'subject' && detail?.type === 2">
               <button
                 class="detail-more-menu__item"
@@ -2635,14 +2860,20 @@ defineExpose({
                 {{ isFollowed(detail.id) ? '取消关注配信情况' : '关注配信情况' }}
               </button>
             </template>
-            <span v-else class="detail-more-menu__empty">此条目无可用选项。</span>
-          </div>
+            <span v-else-if="!['subject', 'person', 'character'].includes(detailPage)" class="detail-more-menu__empty">此条目无可用选项。</span>
+          </div></Transition>
         </div>
         <button class="secondary-button" type="button" @click="closeDetail">关闭</button>
       </div>
     </header>
 
-    <section v-if="detailLoading || personDetailLoading || characterDetailLoading" class="empty">详情加载中...</section>
+    <section v-if="detailLoading || personDetailLoading || characterDetailLoading" class="detail-loading-state" role="status" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      <div class="detail-loading-progress">
+        <div class="detail-loading-progress__label"><span>{{ detailLoadingMessage }}</span><strong>{{ detailLoadingProgress }}%</strong></div>
+        <div class="detail-loading-progress__track"><div class="detail-loading-progress__bar" :style="{ width: `${detailLoadingProgress}%` }" /></div>
+      </div>
+    </section>
     <section v-else-if="detailError" class="empty">详情加载失败：{{ detailError }}</section>
     <section v-else-if="personDetailError" class="empty">人物详情加载失败：{{ personDetailError }}</section>
     <section v-else-if="characterDetailError" class="empty">角色详情加载失败：{{ characterDetailError }}</section>
@@ -3028,7 +3259,7 @@ defineExpose({
             </article>
           </article>
 
-          <article class="comment-box">
+          <article ref="subjectCommentBoxRef" class="comment-box">
             <div class="comment-box__header">
               <h5>吐槽箱</h5>
               <a
@@ -3339,6 +3570,15 @@ defineExpose({
                 <div class="tags-strip" v-if="personDetail.career?.length">
                   <span v-for="career in personDetail.career" :key="career" class="tag-chip tag-chip--meta">{{ personCareerLabel(career) }}</span>
                 </div>
+                <button
+                  v-if="sessionStore.authenticated.value"
+                  class="primary-button entity-collection-button"
+                  type="button"
+                  :disabled="personCollectionSaving || personCollected === null"
+                  @click="togglePersonCollection"
+                >
+                  {{ personCollectionSaving ? "保存中..." : personCollected ? "取消收藏" : "收藏人物" }}
+                </button>
               </div>
             </article>
 
@@ -3489,6 +3729,15 @@ defineExpose({
               <div class="person-hero__main">
                 <h5>{{ characterDetail.name || `Character #${characterDetail.id}` }}</h5>
                 <p class="detail-muted">{{ characterTypeLabel(characterDetail.type) }}</p>
+                <button
+                  v-if="sessionStore.authenticated.value"
+                  class="primary-button entity-collection-button"
+                  type="button"
+                  :disabled="characterCollectionSaving || characterCollected === null"
+                  @click="toggleCharacterCollection"
+                >
+                  {{ characterCollectionSaving ? "保存中..." : characterCollected ? "取消收藏" : "收藏角色" }}
+                </button>
               </div>
             </article>
 
@@ -3589,7 +3838,7 @@ defineExpose({
             </template>
 
             <template v-if="monoDetailTab === 'review'">
-              <article class="comment-box">
+              <article ref="characterCommentBoxRef" class="comment-box">
                 <div class="comment-box__header">
                   <h5>评论</h5>
                   <a

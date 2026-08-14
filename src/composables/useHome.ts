@@ -72,11 +72,9 @@ export function useHome(options: UseHomeOptions = {}) {
 
     logError("clearing broken auth state after home request failure", error, {
       hasSession: Boolean(sessionStore.session.value),
-      hasWorkerToken: Boolean(sessionStore.oauthTokens.value?.accessToken),
     });
 
     sessionStore.session.value = null;
-    sessionStore.oauthTokens.value = null;
     dataStore.collections.value = [];
     appStore.total.value = undefined;
   }

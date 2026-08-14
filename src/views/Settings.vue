@@ -1,21 +1,51 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, defineAsyncComponent, onMounted, ref } from "vue";
 import SettingsHome from "./settings/SettingsHome.vue";
-import DisplaySettings from "./settings/DisplaySettings.vue";
-import DeveloperSettings from "./settings/DeveloperSettings.vue";
-import AboutSettings from "./settings/AboutSettings.vue";
-import WebLoginSettings from "./settings/WebLoginSettings.vue";
-import BroadcastSettings from "./settings/BroadcastSettings.vue";
-import UpdateSettings from "./settings/UpdateSettings.vue";
-import LegalComplianceSettings from "./settings/LegalComplianceSettings.vue";
 
-type SettingsPage = "home" | "display" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance";
+const DisplaySettings = defineAsyncComponent(() => import("./settings/DisplaySettings.vue"));
+const CollectionSettings = defineAsyncComponent(() => import("./settings/CollectionSettings.vue"));
+const DeveloperSettings = defineAsyncComponent(() => import("./settings/DeveloperSettings.vue"));
+const AboutSettings = defineAsyncComponent(() => import("./settings/AboutSettings.vue"));
+const WebLoginSettings = defineAsyncComponent(() => import("./settings/WebLoginSettings.vue"));
+const BroadcastSettings = defineAsyncComponent(() => import("./settings/BroadcastSettings.vue"));
+const UpdateSettings = defineAsyncComponent(() => import("./settings/UpdateSettings.vue"));
+const LegalComplianceSettings = defineAsyncComponent(() => import("./settings/LegalComplianceSettings.vue"));
+
+function preloadSettingsPages() {
+  const preloadTasks = [
+    import("./settings/DisplaySettings.vue"),
+    import("./settings/CollectionSettings.vue"),
+    import("./settings/DeveloperSettings.vue"),
+    import("./settings/AboutSettings.vue"),
+    import("./settings/WebLoginSettings.vue"),
+    import("./settings/BroadcastSettings.vue"),
+    import("./settings/UpdateSettings.vue"),
+    import("./settings/LegalComplianceSettings.vue"),
+  ];
+
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(() => {
+      void Promise.allSettled(preloadTasks);
+    });
+    return;
+  }
+
+  setTimeout(() => {
+    void Promise.allSettled(preloadTasks);
+  }, 150);
+}
+
+type SettingsPage = "home" | "display" | "collection" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance";
 
 const activePage = ref<SettingsPage>("home");
 
 const pageTitle = computed(() => {
   if (activePage.value === "display") {
     return "显示设置";
+  }
+
+  if (activePage.value === "collection") {
+    return "收藏与进度";
   }
 
   if (activePage.value === "about") {
@@ -45,7 +75,7 @@ const pageTitle = computed(() => {
   return "设置";
 });
 
-function openPage(page: "display" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance") {
+function openPage(page: "display" | "collection" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance") {
   activePage.value = page;
 }
 
@@ -55,6 +85,10 @@ function goHome() {
 
 defineExpose({
   openWebLogin: () => openPage("web-login"),
+});
+
+onMounted(() => {
+  preloadSettingsPages();
 });
 </script>
 
@@ -71,6 +105,7 @@ defineExpose({
 
     <SettingsHome v-if="activePage === 'home'" @open-page="openPage" />
     <DisplaySettings v-else-if="activePage === 'display'" />
+    <CollectionSettings v-else-if="activePage === 'collection'" />
     <WebLoginSettings v-else-if="activePage === 'web-login'" />
     <BroadcastSettings v-else-if="activePage === 'broadcast'" />
     <UpdateSettings v-else-if="activePage === 'update'" />

@@ -289,6 +289,21 @@ const SENSITIVE_KEYS: &[&str] = &[
     "email",
     "password",
 ];
+const ENTRY_ID_KEYS: &[&str] = &[
+    "subject_id",
+    "subjectid",
+    "episode_id",
+    "episodeid",
+    "entry_id",
+    "entryid",
+    "anime_id",
+    "animeid",
+    "bangumi_id",
+    "bangumiid",
+    "mal_id",
+    "malid",
+    "id",
+];
 
 struct SensitiveIdentity {
     value: String,
@@ -299,6 +314,7 @@ struct SanitizationContext {
     exact_values: Vec<SensitiveIdentity>,
     user_profile: Option<String>,
     home: Option<String>,
+    strict_privacy_mode: bool,
 }
 
 impl SanitizationContext {
@@ -307,6 +323,7 @@ impl SanitizationContext {
             exact_values: Vec::new(),
             user_profile: std::env::var("USERPROFILE").ok().filter(|v| !v.is_empty()),
             home: std::env::var("HOME").ok().filter(|v| !v.is_empty()),
+            strict_privacy_mode: false,
         };
 
         if let Some(profile) = context.user_profile.clone() {
@@ -377,6 +394,14 @@ impl SanitizationContext {
         for key in SENSITIVE_KEYS {
             result = redact_assigned_values(&result, key);
         }
+        if self.strict_privacy_mode {
+            result = redact_mal_scrape_details(&result);
+            result = redact_entry_id_paths(&result);
+            result = redact_mal_ids(&result);
+            for key in ENTRY_ID_KEYS {
+                result = redact_assigned_values_with_replacement(&result, key, "[ENTRY_ID]");
+            }
+        }
         result
     }
 
@@ -390,6 +415,7 @@ impl SanitizationContext {
             exact_values: Vec::new(),
             user_profile: profile.map(str::to_string),
             home: home.map(str::to_string),
+            strict_privacy_mode: false,
         };
         for (value, replacement) in identities {
             context.add_identity((*value).to_string(), replacement);
@@ -518,6 +544,10 @@ fn redact_bangumi_user_paths(input: &str) -> String {
 }
 
 fn redact_assigned_values(input: &str, key: &str) -> String {
+    redact_assigned_values_with_replacement(input, key, REDACTED)
+}
+
+fn redact_assigned_values_with_replacement(input: &str, key: &str, replacement: &str) -> String {
     let mut result = input.to_string();
     let mut from = 0;
 
@@ -574,8 +604,8 @@ fn redact_assigned_values(input: &str, key: &str) -> String {
             .unwrap_or(result.len());
 
         if value_end > value_start {
-            result.replace_range(value_start..value_end, REDACTED);
-            from = value_start + REDACTED.len();
+            result.replace_range(value_start..value_end, replacement);
+            from = value_start + replacement.len();
         } else {
             from = key_end;
         }
@@ -602,8 +632,84 @@ fn redact_bearer_tokens(input: &str) -> String {
     result
 }
 
+fn redact_entry_id_paths(input: &str) -> String {
+    let mut result = input.to_string();
+    for prefix in [
+        "/subjects/",
+        "/subject/",
+        "/episodes/",
+        "/episode/",
+        "/collections/",
+        "/anime/",
+        "/bangumi/",
+    ] {
+        let mut from = 0;
+        while let Some(prefix_start) = find_ascii_case_insensitive(&result, prefix, from) {
+            let segment_start = prefix_start + prefix.len();
+            let segment_end = result[segment_start..]
+                .char_indices()
+                .find_map(|(offset, character)| {
+                    (character == '/'
+                        || character == '?'
+                        || character == '#'
+                        || character.is_whitespace())
+                    .then_some(segment_start + offset)
+                })
+                .unwrap_or(result.len());
+            if segment_end > segment_start {
+                result.replace_range(segment_start..segment_end, "[ENTRY_ID]");
+                from = segment_start + "[ENTRY_ID]".len();
+            } else {
+                from = segment_start;
+            }
+        }
+    }
+    result
+}
+
+fn redact_mal_ids(input: &str) -> String {
+    let mut result = input.to_string();
+    let mut from = 0;
+    while let Some(start) = find_ascii_case_insensitive(&result, "mal #", from) {
+        let value_start = start + "mal #".len();
+        let value_end = result[value_start..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                (!character.is_ascii_digit()).then_some(value_start + offset)
+            })
+            .unwrap_or(result.len());
+        if value_end > value_start {
+            result.replace_range(value_start..value_end, "[ENTRY_ID]");
+            from = value_start + "[ENTRY_ID]".len();
+        } else {
+            from = value_start;
+        }
+    }
+    result
+}
+
+fn redact_mal_scrape_details(input: &str) -> String {
+    let mut result = input.to_string();
+    let mut from = 0;
+    while let Some(start) = find_ascii_case_insensitive(&result, "mal_scrape:", from) {
+        let value_start = start + "mal_scrape:".len();
+        let value_end = result[value_start..]
+            .find(['\n', '\r'])
+            .map_or(result.len(), |offset| value_start + offset);
+        result.replace_range(value_start..value_end, " [ENTRY_DATA_REDACTED]");
+        from = value_start + " [ENTRY_DATA_REDACTED]".len();
+    }
+    result
+}
+
 fn is_sensitive_key(key: &str) -> bool {
     SENSITIVE_KEYS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(key))
+}
+
+fn is_entry_id_key(key: &str) -> bool {
+    ENTRY_ID_KEYS
         .iter()
         .any(|candidate| candidate.eq_ignore_ascii_case(key))
 }
@@ -620,6 +726,8 @@ fn sanitize_json_value(value: &mut serde_json::Value, context: &SanitizationCont
             for (key, value) in map {
                 if is_sensitive_key(key) {
                     *value = serde_json::Value::String(REDACTED.to_string());
+                } else if context.strict_privacy_mode && is_entry_id_key(key) {
+                    *value = serde_json::Value::String("[ENTRY_ID]".to_string());
                 } else {
                     sanitize_json_value(value, context);
                 }
@@ -636,6 +744,7 @@ pub async fn export_diagnostics(
     app: tauri::AppHandle,
     frontend_errors: Option<Vec<String>>,
     frontend_log_stats: Option<FrontendLogStats>,
+    strict_privacy_mode: Option<bool>,
 ) -> Result<String, String> {
     let config = app.config();
 
@@ -706,7 +815,8 @@ pub async fn export_diagnostics(
         storage_error: auth_storage_error,
     };
     let current_user = stored_token.as_ref().and_then(|token| token.user.as_ref());
-    let sanitization = SanitizationContext::new(current_user);
+    let mut sanitization = SanitizationContext::new(current_user);
+    sanitization.strict_privacy_mode = strict_privacy_mode.unwrap_or(false);
 
     // 4. Snapshot logs without clearing the buffer so repeated exports preserve context.
     let (raw_backend_logs, backend_dropped) = crate::snapshot_rust_logs();
@@ -764,7 +874,11 @@ pub async fn export_diagnostics(
         log_summary,
         backend_logs: sanitized_backend_logs,
         frontend_logs: sanitized_frontend_logs,
-        sanitization_note: "Secrets, authorization data, persistent device identifiers, OS user paths, and Bangumi user identity fields are automatically redacted. Log summary fields report retained and dropped entries so truncation is visible.".to_string(),
+        sanitization_note: if sanitization.strict_privacy_mode {
+            "Strict privacy mode additionally redacts entry identifiers. Secrets, authorization data, persistent device identifiers, OS user paths, and Bangumi user identity fields are automatically redacted. Log summary fields report retained and dropped entries so truncation is visible."
+        } else {
+            "Secrets, authorization data, persistent device identifiers, OS user paths, and Bangumi user identity fields are automatically redacted. Log summary fields report retained and dropped entries so truncation is visible."
+        }.to_string(),
         disclaimer: "诊断信息用于排查软件运行异常。请不要将包含敏感信息的日志公开上传到公共讨论区。".to_string(),
     };
 
@@ -858,6 +972,39 @@ mod tests {
         assert!(sanitized.contains("/users/[BANGUMI_USERNAME]/collections"));
         assert!(sanitized.contains("user_id=[REDACTED]"));
         assert!(sanitized.contains("unrelated=aliceblue"));
+    }
+
+    #[test]
+    fn strict_privacy_redacts_collection_entry_ids_in_paths() {
+        let mut context = SanitizationContext::for_test(None, None, &[]);
+        context.strict_privacy_mode = true;
+        let input =
+            "path=/v0/users/[BANGUMI_USERNAME]/collections/216313/episodes and /collections/558064";
+        let sanitized = context.sanitize(input);
+
+        assert!(!sanitized.contains("216313"), "{sanitized}");
+        assert!(!sanitized.contains("558064"), "{sanitized}");
+        assert!(sanitized.contains("/collections/[ENTRY_ID]/episodes"));
+    }
+
+    #[test]
+    fn strict_privacy_redacts_mal_ids_in_log_text() {
+        let mut context = SanitizationContext::for_test(None, None, &[]);
+        context.strict_privacy_mode = true;
+        let sanitized = context.sanitize("mal_scrape: fetching MAL #61359");
+
+        assert_eq!(sanitized, "mal_scrape: fetching MAL #[ENTRY_ID]");
+    }
+
+    #[test]
+    fn strict_privacy_redacts_mal_scrape_details() {
+        let mut context = SanitizationContext::for_test(None, None, &[]);
+        context.strict_privacy_mode = true;
+        let sanitized = context.sanitize(
+            r#"mal_scrape: label="English:" raw_fragment=" You Can't Be In a Rom-Com!" title=Some Title"#,
+        );
+
+        assert_eq!(sanitized, "mal_scrape: [ENTRY_DATA_REDACTED]");
     }
 
     #[test]

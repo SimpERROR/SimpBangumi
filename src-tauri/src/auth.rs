@@ -1,18 +1,22 @@
+use base64::{
+    engine::general_purpose::STANDARD as BASE64_STANDARD,
+    engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL, Engine as _,
+};
 use keyring::Entry;
-use serde::{Deserialize, Serialize};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL, Engine as _};
+use rand::RngCore;
 use ring::digest::{digest, SHA256};
 use ring::signature::{Ed25519KeyPair, KeyPair};
-use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use url::Url;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::bangumi::{BangumiClient, BangumiUser};
 
@@ -29,13 +33,14 @@ const AUTH_BASE_URL: &str = "https://bgm.tv";
 const WORKER_PROXY_URL: &str = "https://simpbangumiproxy.pulsebeatrhythm.top";
 const OAUTH_CLIENT_ID: &str = "bgm64976a469e533c132";
 const OAUTH_REDIRECT_URI: &str = "http://127.0.0.1:46231/oauth/callback";
-const OAUTH_SCOPE: Option<&str> = None;
 const OAUTH_TIMEOUT_SECONDS: u64 = 180;
 const WORKER_SIGNATURE_VERSION: &str = "v2";
 
-static OAUTH_LOGIN_RECEIVER: OnceLock<Mutex<Option<mpsc::Receiver<Result<OAuthCallbackResult, String>>>>> =
-    OnceLock::new();
-static WEB_COOKIE_CACHE: OnceLock<Mutex<Option<StoredWebCookie>>> = OnceLock::new();
+static OAUTH_LOGIN_RECEIVER: OnceLock<
+    Mutex<Option<mpsc::Receiver<Result<OAuthCallbackResult, String>>>>,
+> = OnceLock::new();
+static OAUTH_PENDING_CALLBACK: OnceLock<Mutex<Option<OAuthCallbackResult>>> = OnceLock::new();
+static WEB_COOKIE_CACHE: OnceLock<Mutex<Option<Arc<StoredWebCookie>>>> = OnceLock::new();
 static OAUTH_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn log_info(message: &str) {
@@ -53,7 +58,7 @@ pub enum TokenSource {
     OAuth,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct StoredToken {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -62,6 +67,33 @@ pub struct StoredToken {
     pub expires_at: Option<i64>,
     pub source: TokenSource,
     pub user: Option<BangumiUser>,
+}
+
+impl Drop for StoredToken {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+        self.token_type.zeroize();
+        self.scope.zeroize();
+    }
+}
+
+#[derive(Default)]
+struct TokenCache {
+    initialized: bool,
+    token: Option<Arc<StoredToken>>,
+}
+
+static TOKEN_CACHE: OnceLock<Mutex<TokenCache>> = OnceLock::new();
+
+fn token_cache() -> &'static Mutex<TokenCache> {
+    TOKEN_CACHE.get_or_init(|| Mutex::new(TokenCache::default()))
+}
+
+fn lock_token_cache() -> Result<std::sync::MutexGuard<'static, TokenCache>, String> {
+    token_cache()
+        .lock()
+        .map_err(|_| "Token cache lock is poisoned".to_string())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,20 +111,26 @@ pub struct WebCookieStatus {
     pub updated_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct StoredWebCookie {
     cookie: String,
     updated_at: i64,
 }
 
-fn read_web_cookie_raw_with_retry(entry: &Entry) -> Result<Option<String>, String> {
+impl Drop for StoredWebCookie {
+    fn drop(&mut self) {
+        self.cookie.zeroize();
+    }
+}
+
+fn read_web_cookie_raw_with_retry(entry: &Entry) -> Result<Option<Zeroizing<String>>, String> {
     // Some Windows keyring backends may not expose newly written credentials immediately.
     const RETRIES: usize = 5;
     const RETRY_DELAY_MS: u64 = 120;
 
     for attempt in 0..RETRIES {
         match entry.get_password() {
-            Ok(raw) => return Ok(Some(raw)),
+            Ok(raw) => return Ok(Some(Zeroizing::new(raw))),
             Err(keyring::Error::NoEntry) if attempt + 1 < RETRIES => {
                 std::thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
             }
@@ -104,7 +142,7 @@ fn read_web_cookie_raw_with_retry(entry: &Entry) -> Result<Option<String>, Strin
     Ok(None)
 }
 
-fn load_cached_web_cookie() -> Option<StoredWebCookie> {
+fn load_cached_web_cookie() -> Option<Arc<StoredWebCookie>> {
     let store = WEB_COOKIE_CACHE.get_or_init(|| Mutex::new(None));
     match store.lock() {
         Ok(guard) => guard.clone(),
@@ -112,7 +150,7 @@ fn load_cached_web_cookie() -> Option<StoredWebCookie> {
     }
 }
 
-fn set_cached_web_cookie(value: Option<StoredWebCookie>) {
+fn set_cached_web_cookie(value: Option<Arc<StoredWebCookie>>) {
     let store = WEB_COOKIE_CACHE.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = store.lock() {
         *guard = value;
@@ -166,22 +204,35 @@ fn validate_web_cookie_header(raw: &str) -> Result<(), String> {
         return Err("Cookie 为空或无效，请重新登录后再自动获取。".to_string());
     }
 
-    let has_auth = pairs.get("chii_auth").map(|value| !value.trim().is_empty()).unwrap_or(false);
-    let has_sid = pairs.get("chii_sid").map(|value| !value.trim().is_empty()).unwrap_or(false);
+    let has_auth = pairs
+        .get("chii_auth")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let has_sid = pairs
+        .get("chii_sid")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
 
     if !has_auth || !has_sid {
-        return Err("Cookie 无效：缺少 chii_auth 或 chii_sid，请重新登录后再自动获取。".to_string());
+        return Err(
+            "Cookie 无效：缺少 chii_auth 或 chii_sid，请重新登录后再自动获取。".to_string(),
+        );
     }
 
     Ok(())
 }
 
 fn save_web_cookie_to_encrypted_file(payload: &StoredWebCookie) -> Result<(), String> {
-    let serialized = serde_json::to_vec(payload)
-        .map_err(|err| format!("Failed to serialize web cookie file payload: {err}"))?;
+    let serialized = Zeroizing::new(
+        serde_json::to_vec(payload)
+            .map_err(|err| format!("Failed to serialize web cookie file payload: {err}"))?,
+    );
 
     let encrypted = encrypt_local_secret_bytes(&serialized)?;
-    let encoded = format!("{ENCRYPTED_FILE_PREFIX}{}", BASE64_STANDARD.encode(encrypted));
+    let encoded = format!(
+        "{ENCRYPTED_FILE_PREFIX}{}",
+        BASE64_STANDARD.encode(encrypted)
+    );
     let path = web_cookie_cache_path()?;
 
     if let Some(parent) = path.parent() {
@@ -199,8 +250,10 @@ fn load_web_cookie_from_encrypted_file() -> Result<Option<StoredWebCookie>, Stri
         return Ok(None);
     }
 
-    let raw = fs::read_to_string(&path)
-        .map_err(|err| format!("Failed to read encrypted web cookie cache: {err}"))?;
+    let raw = Zeroizing::new(
+        fs::read_to_string(&path)
+            .map_err(|err| format!("Failed to read encrypted web cookie cache: {err}"))?,
+    );
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -214,7 +267,7 @@ fn load_web_cookie_from_encrypted_file() -> Result<Option<StoredWebCookie>, Stri
     let encrypted = BASE64_STANDARD
         .decode(encoded)
         .map_err(|err| format!("Failed to decode encrypted web cookie cache: {err}"))?;
-    let decrypted = decrypt_local_secret_bytes(&encrypted)?;
+    let decrypted = Zeroizing::new(decrypt_local_secret_bytes(&encrypted)?);
 
     let stored = serde_json::from_slice::<StoredWebCookie>(&decrypted)
         .map_err(|err| format!("Failed to parse encrypted web cookie cache payload: {err}"))?;
@@ -338,7 +391,6 @@ fn decrypt_local_secret_bytes(_cipher: &[u8]) -> Result<Vec<u8>, String> {
 pub struct OAuthClientConfig {
     pub client_id: String,
     pub redirect_uri: String,
-    pub scope: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -351,7 +403,7 @@ pub struct OAuthStartLoginRequest {
     pub state: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct OAuthLoginStatus {
     pub completed: bool,
@@ -360,13 +412,36 @@ pub struct OAuthLoginStatus {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+impl Drop for OAuthLoginStatus {
+    fn drop(&mut self) {
+        self.code.zeroize();
+        self.code_verifier.zeroize();
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct OAuthFinishStatus {
+    pub completed: bool,
+    pub authorized: bool,
+    pub session: Option<AuthSession>,
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct WorkerOAuthTokenRequest {
     pub access_token: String,
     pub refresh_token: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl Drop for WorkerOAuthTokenRequest {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct WorkerExchangeCodeRequest {
     pub grant_type: String,
     pub code: String,
@@ -375,11 +450,24 @@ pub struct WorkerExchangeCodeRequest {
     auth: Option<WorkerRequestAuth>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl Drop for WorkerExchangeCodeRequest {
+    fn drop(&mut self) {
+        self.code.zeroize();
+        self.code_verifier.zeroize();
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct WorkerRefreshTokenRequest {
     pub refresh_token: String,
     pub grant_type: String,
     auth: Option<WorkerRequestAuth>,
+}
+
+impl Drop for WorkerRefreshTokenRequest {
+    fn drop(&mut self) {
+        self.refresh_token.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -397,25 +485,43 @@ struct WorkerRequestAuth {
     signature: String,
 }
 
-#[derive(Debug)]
 struct OAuthCallbackResult {
     code: String,
     code_verifier: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl Drop for OAuthCallbackResult {
+    fn drop(&mut self) {
+        self.code.zeroize();
+        self.code_verifier.zeroize();
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct WorkerExchangeTokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub user_id: Option<serde_json::Value>,
 }
 
-pub fn load_token() -> Result<Option<StoredToken>, String> {
-    let entry = token_entry()?;
+impl Drop for WorkerExchangeTokenResponse {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+    }
+}
 
-    match entry.get_password() {
+pub fn load_token() -> Result<Option<Arc<StoredToken>>, String> {
+    let mut cache = lock_token_cache()?;
+    if cache.initialized {
+        return Ok(cache.token.clone());
+    }
+
+    let entry = token_entry()?;
+    let loaded = match entry.get_password() {
         Ok(raw) => {
             log_info("loaded token from keyring");
+            let raw = Zeroizing::new(raw);
             serde_json::from_str(&raw)
                 .map(Some)
                 .map_err(|err| format!("Failed to parse stored token: {err}"))
@@ -425,28 +531,45 @@ pub fn load_token() -> Result<Option<StoredToken>, String> {
             load_token_from_file()
         }
         Err(err) => Err(format!("Failed to read token from keyring: {err}")),
-    }
+    }?;
+
+    cache.token = loaded.map(Arc::new);
+    cache.initialized = true;
+    Ok(cache.token.clone())
 }
 
-pub fn save_token(token: &StoredToken) -> Result<(), String> {
-    let raw = serde_json::to_string(token)
-        .map_err(|err| format!("Failed to serialize token: {err}"))?;
+pub fn save_token(token: Arc<StoredToken>) -> Result<(), String> {
+    let raw = Zeroizing::new(
+        serde_json::to_string(token.as_ref())
+            .map_err(|err| format!("Failed to serialize token: {err}"))?,
+    );
 
     save_token_to_file(&raw)?;
 
     let entry = token_entry()?;
 
     if let Err(err) = entry.set_password(&raw) {
-        log_error(&format!("failed to save token to keyring, using file fallback: {err}"));
+        log_error(&format!(
+            "failed to save token to keyring, using file fallback: {err}"
+        ));
     } else {
         log_info("saved token to keyring");
     }
 
+    let mut cache = lock_token_cache()?;
+    cache.token = Some(token);
+    cache.initialized = true;
     log_info("saved token to local session cache");
     Ok(())
 }
 
 pub fn delete_token() -> Result<(), String> {
+    {
+        let mut cache = lock_token_cache()?;
+        cache.token = None;
+        cache.initialized = true;
+    }
+
     let entry = token_entry()?;
     delete_token_file()?;
 
@@ -462,14 +585,14 @@ pub fn delete_token() -> Result<(), String> {
     }
 }
 
-pub fn session_from_token(token: Option<StoredToken>) -> AuthSession {
+pub fn session_from_token(token: Option<&StoredToken>) -> AuthSession {
     match token {
         Some(token) => AuthSession {
             authenticated: true,
-            source: Some(token.source),
-            scope: token.scope,
+            source: Some(token.source.clone()),
+            scope: token.scope.clone(),
             expires_at: token.expires_at,
-            user: token.user,
+            user: token.user.clone(),
         },
         None => AuthSession {
             authenticated: false,
@@ -488,7 +611,7 @@ pub fn load_web_cookie() -> Result<Option<String>, String> {
         Ok(Some(raw)) => {
             if let Some(stored) = parse_stored_web_cookie(&raw) {
                 let cookie = stored.cookie.trim().to_string();
-                set_cached_web_cookie(Some(stored));
+                set_cached_web_cookie(Some(Arc::new(stored)));
                 return Ok(Some(cookie));
             }
 
@@ -497,7 +620,7 @@ pub fn load_web_cookie() -> Result<Option<String>, String> {
         Ok(None) => {
             if let Some(stored) = load_web_cookie_from_encrypted_file()? {
                 let cookie = stored.cookie.trim().to_string();
-                set_cached_web_cookie(Some(stored));
+                set_cached_web_cookie(Some(Arc::new(stored)));
                 return Ok(Some(cookie));
             }
 
@@ -511,10 +634,12 @@ pub fn load_web_cookie() -> Result<Option<String>, String> {
             }))
         }
         Err(error) => {
-            log_error(&format!("failed reading web cookie from keyring, using memory fallback: {error}"));
+            log_error(&format!(
+                "failed reading web cookie from keyring, using memory fallback: {error}"
+            ));
             if let Some(stored) = load_web_cookie_from_encrypted_file()? {
                 let cookie = stored.cookie.trim().to_string();
-                set_cached_web_cookie(Some(stored));
+                set_cached_web_cookie(Some(Arc::new(stored)));
                 return Ok(Some(cookie));
             }
 
@@ -548,13 +673,15 @@ pub fn save_web_cookie(cookie: String) -> Result<WebCookieStatus, String> {
         .map_err(|err| format!("Failed to resolve current time: {err}"))?
         .as_secs() as i64;
 
-    let payload = StoredWebCookie {
+    let payload = Arc::new(StoredWebCookie {
         cookie: normalized,
         updated_at: now,
-    };
+    });
 
-    let raw = serde_json::to_string(&payload)
-        .map_err(|err| format!("Failed to serialize web cookie: {err}"))?;
+    let raw = Zeroizing::new(
+        serde_json::to_string(payload.as_ref())
+            .map_err(|err| format!("Failed to serialize web cookie: {err}"))?,
+    );
 
     set_cached_web_cookie(Some(payload.clone()));
 
@@ -568,7 +695,7 @@ pub fn save_web_cookie(cookie: String) -> Result<WebCookieStatus, String> {
         }
     };
 
-    let file_ok = match save_web_cookie_to_encrypted_file(&payload) {
+    let file_ok = match save_web_cookie_to_encrypted_file(payload.as_ref()) {
         Ok(()) => true,
         Err(err) => {
             log_error(&format!(
@@ -596,7 +723,9 @@ pub fn clear_web_cookie() -> Result<WebCookieStatus, String> {
 
     let keyring_result = match web_cookie_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(err) => Err(format!("Failed to clear web cookie from system keyring: {err}")),
+        Err(err) => Err(format!(
+            "Failed to clear web cookie from system keyring: {err}"
+        )),
     };
 
     let file_result = delete_web_cookie_file();
@@ -621,6 +750,7 @@ pub fn web_cookie_status() -> Result<WebCookieStatus, String> {
     match read_web_cookie_raw_with_retry(&entry) {
         Ok(Some(raw)) => {
             if let Some(stored) = parse_stored_web_cookie(&raw) {
+                let stored = Arc::new(stored);
                 set_cached_web_cookie(Some(stored.clone()));
                 return Ok(WebCookieStatus {
                     configured: !stored.cookie.trim().is_empty(),
@@ -635,6 +765,7 @@ pub fn web_cookie_status() -> Result<WebCookieStatus, String> {
         }
         Ok(None) => {
             if let Some(stored) = load_web_cookie_from_encrypted_file()? {
+                let stored = Arc::new(stored);
                 set_cached_web_cookie(Some(stored.clone()));
                 return Ok(WebCookieStatus {
                     configured: !stored.cookie.trim().is_empty(),
@@ -655,9 +786,12 @@ pub fn web_cookie_status() -> Result<WebCookieStatus, String> {
             })
         }
         Err(error) => {
-            log_error(&format!("failed reading web cookie status from keyring, using memory fallback: {error}"));
+            log_error(&format!(
+                "failed reading web cookie status from keyring, using memory fallback: {error}"
+            ));
 
             if let Some(stored) = load_web_cookie_from_encrypted_file()? {
+                let stored = Arc::new(stored);
                 set_cached_web_cookie(Some(stored.clone()));
                 return Ok(WebCookieStatus {
                     configured: !stored.cookie.trim().is_empty(),
@@ -689,12 +823,9 @@ pub fn load_oauth_client_config() -> Result<OAuthClientConfig, String> {
 
     let client_id = OAUTH_CLIENT_ID.trim().to_string();
     let redirect_uri = OAUTH_REDIRECT_URI.trim().to_string();
-    let scope = OAUTH_SCOPE.map(|value| value.to_string());
-
     Ok(OAuthClientConfig {
         client_id,
         redirect_uri,
-        scope,
     })
 }
 
@@ -709,6 +840,12 @@ pub fn start_oauth_login(_state: Option<String>) -> Result<OAuthAuthorizeUrl, St
     if guard.is_some() {
         return Err("OAuth login already in progress".to_string());
     }
+
+    let pending_store = OAUTH_PENDING_CALLBACK.get_or_init(|| Mutex::new(None));
+    let mut pending = pending_store
+        .lock()
+        .map_err(|_| "OAuth pending callback lock poisoned".to_string())?;
+    *pending = None;
 
     let state = generate_oauth_state()?;
     let code_verifier = generate_pkce_verifier()?;
@@ -738,12 +875,12 @@ pub fn wait_oauth_login_result() -> Result<OAuthLoginStatus, String> {
         Ok(result) => {
             *guard = None;
             match result {
-                Ok(callback) => {
+                Ok(mut callback) => {
                     log_info("OAuth callback code received");
                     Ok(OAuthLoginStatus {
                         completed: true,
-                        code: Some(callback.code),
-                        code_verifier: Some(callback.code_verifier),
+                        code: Some(std::mem::take(&mut callback.code)),
+                        code_verifier: Some(std::mem::take(&mut callback.code_verifier)),
                         error: None,
                     })
                 }
@@ -777,11 +914,89 @@ pub fn wait_oauth_login_result() -> Result<OAuthLoginStatus, String> {
     }
 }
 
+pub async fn finish_oauth_login(client: &BangumiClient) -> Result<OAuthFinishStatus, String> {
+    let pending_store = OAUTH_PENDING_CALLBACK.get_or_init(|| Mutex::new(None));
+    let pending_callback = pending_store
+        .lock()
+        .map_err(|_| "OAuth pending callback lock poisoned".to_string())?
+        .take();
+
+    if let Some(mut callback) = pending_callback {
+        let mut exchanged = exchange_code_via_worker(WorkerExchangeCodeRequest {
+            grant_type: "authorization_code".to_string(),
+            code: std::mem::take(&mut callback.code),
+            redirect_uri: OAUTH_REDIRECT_URI.to_string(),
+            code_verifier: std::mem::take(&mut callback.code_verifier),
+            auth: None,
+        })
+        .await?;
+
+        let session = login_with_worker_token(
+            client,
+            WorkerOAuthTokenRequest {
+                access_token: std::mem::take(&mut exchanged.access_token),
+                refresh_token: std::mem::take(&mut exchanged.refresh_token),
+            },
+        )
+        .await?;
+
+        return Ok(OAuthFinishStatus {
+            completed: true,
+            authorized: true,
+            session: Some(session),
+            error: None,
+        });
+    }
+
+    let mut status = wait_oauth_login_result()?;
+    if !status.completed {
+        return Ok(OAuthFinishStatus {
+            completed: false,
+            authorized: false,
+            session: None,
+            error: None,
+        });
+    }
+
+    if let Some(error) = status.error.take() {
+        return Ok(OAuthFinishStatus {
+            completed: true,
+            authorized: false,
+            session: None,
+            error: Some(error),
+        });
+    }
+
+    let code = status
+        .code
+        .take()
+        .ok_or_else(|| "OAuth callback missing code".to_string())?;
+    let code_verifier = status
+        .code_verifier
+        .take()
+        .ok_or_else(|| "OAuth callback missing PKCE verifier".to_string())?;
+    let mut pending = pending_store
+        .lock()
+        .map_err(|_| "OAuth pending callback lock poisoned".to_string())?;
+    *pending = Some(OAuthCallbackResult {
+        code,
+        code_verifier,
+    });
+
+    Ok(OAuthFinishStatus {
+        completed: false,
+        authorized: true,
+        session: None,
+        error: None,
+    })
+}
+
 fn wait_for_callback_and_capture_code(
     config: OAuthClientConfig,
     expected_state: String,
     code_verifier: String,
 ) -> Result<OAuthCallbackResult, String> {
+    let mut code_verifier = Zeroizing::new(code_verifier);
     let redirect = Url::parse(&config.redirect_uri)
         .map_err(|err| format!("Invalid OAuth redirect URI: {err}"))?;
 
@@ -799,7 +1014,9 @@ fn wait_for_callback_and_capture_code(
 
     let listener = TcpListener::bind((host, port))
         .map_err(|err| format!("Failed to bind OAuth callback listener: {err}"))?;
-    log_info(&format!("listening for OAuth callback on {host}:{port}{callback_path}"));
+    log_info(&format!(
+        "listening for OAuth callback on {host}:{port}{callback_path}"
+    ));
     listener
         .set_nonblocking(true)
         .map_err(|err| format!("Failed to configure OAuth callback listener: {err}"))?;
@@ -843,15 +1060,13 @@ fn wait_for_callback_and_capture_code(
                     continue;
                 }
 
-                let callback_state = callback_url
-                    .query_pairs()
-                    .find_map(|(key, value)| {
-                        if key == "state" {
-                            Some(value.into_owned())
-                        } else {
-                            None
-                        }
-                    });
+                let callback_state = callback_url.query_pairs().find_map(|(key, value)| {
+                    if key == "state" {
+                        Some(value.into_owned())
+                    } else {
+                        None
+                    }
+                });
 
                 if callback_state.as_deref() != Some(expected_state.as_str()) {
                     write_callback_response(
@@ -888,7 +1103,10 @@ fn wait_for_callback_and_capture_code(
                 );
                 log_info("OAuth callback handled successfully");
 
-                return Ok(OAuthCallbackResult { code, code_verifier });
+                return Ok(OAuthCallbackResult {
+                    code,
+                    code_verifier: std::mem::take(&mut *code_verifier),
+                });
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(150));
@@ -901,22 +1119,26 @@ fn wait_for_callback_and_capture_code(
 }
 
 fn escape_html(input: &str) -> String {
-        input
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;")
-                .replace('"', "&quot;")
-                .replace('\'', "&#39;")
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn build_callback_html(message: &str, success: bool, theme: Option<&str>) -> String {
-        let escaped_message = escape_html(message);
-        let status_text = if success { "OAuth 登录成功" } else { "OAuth 登录未完成" };
-        let icon = if success { "✓" } else { "!" };
-        let theme_attr = theme.unwrap_or("auto");
+    let escaped_message = escape_html(message);
+    let status_text = if success {
+        "OAuth 登录成功"
+    } else {
+        "OAuth 登录未完成"
+    };
+    let icon = if success { "✓" } else { "!" };
+    let theme_attr = theme.unwrap_or("auto");
 
-        format!(
-                r#"<!doctype html>
+    format!(
+        r#"<!doctype html>
 <html lang="zh-CN" data-theme="{theme_attr}">
     <head>
         <meta charset="utf-8" />
@@ -1061,27 +1283,27 @@ fn build_callback_html(message: &str, success: bool, theme: Option<&str>) -> Str
         </main>
     </body>
 </html>"#,
-                icon_color = if success { "var(--ok)" } else { "var(--warn)" },
-                icon_bg = if success {
-                        "color-mix(in srgb, var(--ok) 16%, transparent)"
-                } else {
-                        "color-mix(in srgb, var(--warn) 16%, transparent)"
-                },
-                icon_ring = if success {
-                        "color-mix(in srgb, var(--ok) 32%, transparent)"
-                } else {
-                        "color-mix(in srgb, var(--warn) 32%, transparent)"
-                }
-        )
+        icon_color = if success { "var(--ok)" } else { "var(--warn)" },
+        icon_bg = if success {
+            "color-mix(in srgb, var(--ok) 16%, transparent)"
+        } else {
+            "color-mix(in srgb, var(--warn) 16%, transparent)"
+        },
+        icon_ring = if success {
+            "color-mix(in srgb, var(--ok) 32%, transparent)"
+        } else {
+            "color-mix(in srgb, var(--warn) 32%, transparent)"
+        }
+    )
 }
 
 fn write_callback_response(
-        stream: &mut std::net::TcpStream,
-        success: bool,
-        message: &str,
-        theme: Option<&str>,
+    stream: &mut std::net::TcpStream,
+    success: bool,
+    message: &str,
+    theme: Option<&str>,
 ) {
-        let body = build_callback_html(message, success, theme);
+    let body = build_callback_html(message, success, theme);
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),
@@ -1092,9 +1314,9 @@ fn write_callback_response(
 }
 
 pub fn build_oauth_authorize_url(
-        config: &OAuthClientConfig,
-        state: &str,
-        code_challenge: &str,
+    config: &OAuthClientConfig,
+    state: &str,
+    code_challenge: &str,
 ) -> Result<OAuthAuthorizeUrl, String> {
     let mut url = Url::parse(&format!("{AUTH_BASE_URL}/oauth/authorize"))
         .map_err(|err| format!("Failed to build OAuth authorize URL: {err}"))?;
@@ -1105,10 +1327,6 @@ pub fn build_oauth_authorize_url(
             .append_pair("client_id", &config.client_id)
             .append_pair("response_type", "code")
             .append_pair("redirect_uri", &config.redirect_uri);
-
-        if let Some(scope) = config.scope.as_deref() {
-            query.append_pair("scope", scope);
-        }
 
         query
             .append_pair("state", state)
@@ -1126,7 +1344,9 @@ fn generate_pkce_verifier() -> Result<String, String> {
     rand::rngs::OsRng
         .try_fill_bytes(&mut bytes)
         .map_err(|error| format!("Failed to generate PKCE verifier: {error}"))?;
-    Ok(BASE64_URL.encode(bytes))
+    let verifier = BASE64_URL.encode(bytes);
+    bytes.zeroize();
+    Ok(verifier)
 }
 
 fn pkce_code_challenge(verifier: &str) -> String {
@@ -1141,69 +1361,78 @@ fn generate_oauth_state() -> Result<String, String> {
     Ok(BASE64_STANDARD.encode(bytes))
 }
 
-pub async fn login_with_personal_access_token(token: String) -> Result<AuthSession, String> {
+pub async fn login_with_personal_access_token(
+    client: &BangumiClient,
+    token: String,
+) -> Result<AuthSession, String> {
     log_info("logging in with personal access token");
-    let client = BangumiClient::new(Some(token.clone()))?;
-    let user = client.me().await?;
+    let mut token = Zeroizing::new(token);
+    let user = client.me(&token).await?;
 
-    let stored = StoredToken {
-        access_token: token,
+    let stored = Arc::new(StoredToken {
+        access_token: std::mem::take(&mut *token),
         refresh_token: None,
         token_type: Some("Bearer".to_string()),
         scope: None,
         expires_at: None,
         source: TokenSource::PersonalAccessToken,
         user: Some(user),
-    };
+    });
 
-    save_token(&stored)?;
-    Ok(session_from_token(Some(stored)))
+    save_token(stored.clone())?;
+    Ok(session_from_token(Some(stored.as_ref())))
 }
 
-pub async fn login_with_worker_token(req: WorkerOAuthTokenRequest) -> Result<AuthSession, String> {
+pub async fn login_with_worker_token(
+    client: &BangumiClient,
+    mut req: WorkerOAuthTokenRequest,
+) -> Result<AuthSession, String> {
     log_info(&format!(
         "logging in with worker token (has_refresh_token={})",
         req.refresh_token.is_some()
     ));
-    let client = BangumiClient::new(Some(req.access_token.clone()))?;
-    let user = client.me().await?;
+    let user = client.me(&req.access_token).await?;
 
-    let stored = StoredToken {
-        access_token: req.access_token,
-        refresh_token: req.refresh_token,
+    let stored = Arc::new(StoredToken {
+        access_token: std::mem::take(&mut req.access_token),
+        refresh_token: std::mem::take(&mut req.refresh_token),
         token_type: Some("Bearer".to_string()),
         scope: None,
         expires_at: None,
         source: TokenSource::OAuth,
         user: Some(user),
-    };
+    });
 
-    save_token(&stored)?;
-    Ok(session_from_token(Some(stored)))
+    save_token(stored.clone())?;
+    Ok(session_from_token(Some(stored.as_ref())))
 }
 
-pub async fn refresh_saved_oauth_session_if_current(failed_access_token: Option<&str>) -> Result<AuthSession, String> {
+pub async fn refresh_saved_oauth_session_if_current(
+    client: &BangumiClient,
+    failed_access_token: Option<&str>,
+) -> Result<AuthSession, String> {
     log_info("refreshing saved OAuth session");
     let _refresh_guard = OAUTH_REFRESH_LOCK.lock().await;
-    let stored = load_token()?
-        .ok_or_else(|| "No stored Bangumi session".to_string())?;
+    let stored = load_token()?.ok_or_else(|| "No stored Bangumi session".to_string())?;
 
     if failed_access_token.is_some_and(|failed| failed != stored.access_token) {
         log_info("OAuth session was already refreshed by another request");
-        return Ok(session_from_token(Some(stored)));
+        return Ok(session_from_token(Some(stored.as_ref())));
     }
 
     if !matches!(stored.source, TokenSource::OAuth) {
         return Err("Stored session is not an OAuth session".to_string());
     }
 
-    let refresh_token = stored
-        .refresh_token
-        .clone()
-        .ok_or_else(|| "Stored OAuth session has no refresh token".to_string())?;
+    let mut refresh_token = Zeroizing::new(
+        stored
+            .refresh_token
+            .clone()
+            .ok_or_else(|| "Stored OAuth session has no refresh token".to_string())?,
+    );
 
-    let refreshed = refresh_token_via_worker(WorkerRefreshTokenRequest {
-        refresh_token: refresh_token.clone(),
+    let mut refreshed = refresh_token_via_worker(WorkerRefreshTokenRequest {
+        refresh_token: refresh_token.to_string(),
         grant_type: "refresh_token".to_string(),
         auth: None,
     })
@@ -1214,10 +1443,14 @@ pub async fn refresh_saved_oauth_session_if_current(failed_access_token: Option<
         refreshed.refresh_token.is_some()
     ));
 
-    login_with_worker_token(WorkerOAuthTokenRequest {
-        access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token.or(Some(refresh_token)),
-    })
+    login_with_worker_token(
+        client,
+        WorkerOAuthTokenRequest {
+            access_token: std::mem::take(&mut refreshed.access_token),
+            refresh_token: std::mem::take(&mut refreshed.refresh_token)
+                .or_else(|| Some(std::mem::take(&mut *refresh_token))),
+        },
+    )
     .await
 }
 
@@ -1231,9 +1464,14 @@ fn load_or_create_device_key() -> Result<StoredDeviceKey, String> {
         Ok(entry) => match entry.get_password() {
             Ok(raw) => {
                 let stored = parse_stored_device_key(&raw)?;
-                log_info(&format!("device key loaded source=keyring device_id={}", stored.device_id));
+                log_info(&format!(
+                    "device key loaded source=keyring device_id={}",
+                    stored.device_id
+                ));
                 if let Err(error) = save_device_key_to_file(&stored) {
-                    log_error(&format!("failed to refresh encrypted device key fallback: {error}"));
+                    log_error(&format!(
+                        "failed to refresh encrypted device key fallback: {error}"
+                    ));
                 }
                 Ok(stored)
             }
@@ -1242,34 +1480,53 @@ fn load_or_create_device_key() -> Result<StoredDeviceKey, String> {
                     if let Err(error) = entry.set_password(&serialize_device_key(&stored)?) {
                         log_error(&format!("failed to restore device key to keyring: {error}"));
                     }
-                    log_info(&format!("device key loaded source=encrypted-file-fallback device_id={}", stored.device_id));
-                return Ok(stored);
+                    log_info(&format!(
+                        "device key loaded source=encrypted-file-fallback device_id={}",
+                        stored.device_id
+                    ));
+                    return Ok(stored);
                 }
                 create_and_store_device_key(&entry)
             }
             Err(error) => {
                 if let Some(stored) = load_device_key_from_file()? {
-                    log_error(&format!("device keyring unavailable, using encrypted fallback: {error}"));
-                    log_info(&format!("device key loaded source=encrypted-file-fallback device_id={}", stored.device_id));
-                return Ok(stored);
+                    log_error(&format!(
+                        "device keyring unavailable, using encrypted fallback: {error}"
+                    ));
+                    log_info(&format!(
+                        "device key loaded source=encrypted-file-fallback device_id={}",
+                        stored.device_id
+                    ));
+                    return Ok(stored);
                 }
-                Err(format!("Device keyring unavailable and no encrypted fallback exists: {error}"))
+                Err(format!(
+                    "Device keyring unavailable and no encrypted fallback exists: {error}"
+                ))
             }
         },
         Err(error) => {
             if let Some(stored) = load_device_key_from_file()? {
-                log_error(&format!("device keyring unavailable, using encrypted fallback: {error}"));
-                log_info(&format!("device key loaded source=encrypted-file-fallback device_id={}", stored.device_id));
+                log_error(&format!(
+                    "device keyring unavailable, using encrypted fallback: {error}"
+                ));
+                log_info(&format!(
+                    "device key loaded source=encrypted-file-fallback device_id={}",
+                    stored.device_id
+                ));
                 return Ok(stored);
             }
-            Err(format!("Device keyring unavailable and no encrypted fallback exists: {error}"))
+            Err(format!(
+                "Device keyring unavailable and no encrypted fallback exists: {error}"
+            ))
         }
     }
 }
 
 fn create_and_store_device_key(entry: &Entry) -> Result<StoredDeviceKey, String> {
     let mut secret = [0u8; 32];
-    rand::rngs::OsRng.try_fill_bytes(&mut secret).map_err(|e| e.to_string())?;
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut secret)
+        .map_err(|e| e.to_string())?;
     Ed25519KeyPair::from_seed_unchecked(&secret)
         .map_err(|e| format!("Failed to create device key: {e}"))?;
     let stored = StoredDeviceKey {
@@ -1282,9 +1539,14 @@ fn create_and_store_device_key(entry: &Entry) -> Result<StoredDeviceKey, String>
             format!("Failed to save device key to keyring: {error}; encrypted fallback also failed: {fallback}")
         })?;
     } else if let Err(error) = save_device_key_to_file(&stored) {
-        log_error(&format!("failed to save encrypted device key fallback: {error}"));
+        log_error(&format!(
+            "failed to save encrypted device key fallback: {error}"
+        ));
     }
-    log_info(&format!("device key loaded source=newly-created device_id={}", stored.device_id));
+    log_info(&format!(
+        "device key loaded source=newly-created device_id={}",
+        stored.device_id
+    ));
     Ok(stored)
 }
 
@@ -1305,7 +1567,9 @@ fn parse_stored_device_key(raw: &str) -> Result<StoredDeviceKey, String> {
         .map_err(|error| format!("Invalid stored device key secret: {error}"))?;
     let expected_device_id = BASE64_URL.encode(&secret[..16]);
     if stored.device_id != expected_device_id {
-        return Err("Stored device key is inconsistent: device_id does not match secret_key".to_string());
+        return Err(
+            "Stored device key is inconsistent: device_id does not match secret_key".to_string(),
+        );
     }
     Ok(stored)
 }
@@ -1341,19 +1605,36 @@ fn save_device_key_to_file(key: &StoredDeviceKey) -> Result<(), String> {
     }
     let serialized = serialize_device_key(key)?;
     let encrypted = encrypt_local_secret_bytes(serialized.as_bytes())?;
-    let encoded = format!("{ENCRYPTED_FILE_PREFIX}{}", BASE64_STANDARD.encode(encrypted));
+    let encoded = format!(
+        "{ENCRYPTED_FILE_PREFIX}{}",
+        BASE64_STANDARD.encode(encrypted)
+    );
     fs::write(&path, encoded)
         .map_err(|error| format!("Failed to write encrypted device key fallback: {error}"))
 }
-fn worker_auth(key: &StoredDeviceKey, grant_type: &str, value: &str, binding: Option<&str>) -> Result<WorkerRequestAuth, String> {
-    let secret = BASE64_URL.decode(&key.secret_key).map_err(|e| format!("Invalid device key: {e}"))?;
-    let secret: [u8; 32] = secret.try_into().map_err(|_| "Invalid device key length".to_string())?;
-    let signing = Ed25519KeyPair::from_seed_unchecked(&secret).map_err(|e| format!("Invalid device key: {e}"))?;
+fn worker_auth(
+    key: &StoredDeviceKey,
+    grant_type: &str,
+    value: &str,
+    binding: Option<&str>,
+) -> Result<WorkerRequestAuth, String> {
+    let secret = BASE64_URL
+        .decode(&key.secret_key)
+        .map_err(|e| format!("Invalid device key: {e}"))?;
+    let secret: [u8; 32] = secret
+        .try_into()
+        .map_err(|_| "Invalid device key length".to_string())?;
+    let signing = Ed25519KeyPair::from_seed_unchecked(&secret)
+        .map_err(|e| format!("Invalid device key: {e}"))?;
     let mut nonce_bytes = [0u8; 24];
-    rand::rngs::OsRng.try_fill_bytes(&mut nonce_bytes).map_err(|e| e.to_string())?;
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut nonce_bytes)
+        .map_err(|e| e.to_string())?;
     let nonce = BASE64_URL.encode(nonce_bytes);
     let timestamp = time::OffsetDateTime::now_utc().unix_timestamp();
-    let message_value = binding.map(|extra| format!("{value}.{extra}")).unwrap_or_else(|| value.to_string());
+    let message_value = binding
+        .map(|extra| format!("{value}.{extra}"))
+        .unwrap_or_else(|| value.to_string());
     let message = format!(
         "{WORKER_SIGNATURE_VERSION}.{grant_type}.{}.{}.{}.{}",
         key.device_id, timestamp, nonce, message_value
@@ -1361,7 +1642,13 @@ fn worker_auth(key: &StoredDeviceKey, grant_type: &str, value: &str, binding: Op
     let device_public_key = BASE64_URL.encode(signing.public_key().as_ref());
     let signature = BASE64_URL.encode(signing.sign(message.as_bytes()).as_ref());
     log_info(&format!("device request signed version={WORKER_SIGNATURE_VERSION} grant_type={grant_type} device_id={} public_key_len={} timestamp={} nonce_prefix={} message_len={} value_len={} binding_present={}", key.device_id, device_public_key.len(), timestamp, &nonce[..8.min(nonce.len())], message.len(), value.len(), binding.is_some()));
-    Ok(WorkerRequestAuth { device_id: key.device_id.clone(), device_public_key, timestamp, nonce, signature })
+    Ok(WorkerRequestAuth {
+        device_id: key.device_id.clone(),
+        device_public_key,
+        timestamp,
+        nonce,
+        signature,
+    })
 }
 pub async fn exchange_code_via_worker(
     req: WorkerExchangeCodeRequest,
@@ -1377,7 +1664,12 @@ pub async fn exchange_code_via_worker(
 
     let mut req = req;
     let device_key = load_or_create_device_key()?;
-    req.auth = Some(worker_auth(&device_key, "authorization_code", &req.code, Some(&req.code_verifier))?);
+    req.auth = Some(worker_auth(
+        &device_key,
+        "authorization_code",
+        &req.code,
+        Some(&req.code_verifier),
+    )?);
     log_info(&format!("posting authorization-code request worker_url={} device_id={} code_len={} code_verifier_len={}", WORKER_PROXY_URL, device_key.device_id, req.code.len(), req.code_verifier.len()));
     let response = http
         .post(WORKER_PROXY_URL)
@@ -1403,8 +1695,18 @@ pub async fn refresh_token_via_worker(
 
     let mut req = req;
     let device_key = load_or_create_device_key()?;
-    req.auth = Some(worker_auth(&device_key, "refresh_token", &req.refresh_token, None)?);
-    log_info(&format!("posting refresh-token request worker_url={} device_id={} refresh_token_len={}", WORKER_PROXY_URL, device_key.device_id, req.refresh_token.len()));
+    req.auth = Some(worker_auth(
+        &device_key,
+        "refresh_token",
+        &req.refresh_token,
+        None,
+    )?);
+    log_info(&format!(
+        "posting refresh-token request worker_url={} device_id={} refresh_token_len={}",
+        WORKER_PROXY_URL,
+        device_key.device_id,
+        req.refresh_token.len()
+    ));
     let response = http
         .post(WORKER_PROXY_URL)
         .json(&req)
@@ -1452,8 +1754,10 @@ fn load_token_from_file() -> Result<Option<StoredToken>, String> {
         return Ok(None);
     }
 
-    let raw = fs::read_to_string(&path)
-        .map_err(|err| format!("Failed to read local session cache: {err}"))?;
+    let raw = Zeroizing::new(
+        fs::read_to_string(&path)
+            .map_err(|err| format!("Failed to read local session cache: {err}"))?,
+    );
     log_info("loaded token from local session cache");
 
     let trimmed = raw.trim();
@@ -1466,7 +1770,7 @@ fn load_token_from_file() -> Result<Option<StoredToken>, String> {
         let encrypted = BASE64_STANDARD
             .decode(encoded)
             .map_err(|err| format!("Failed to decode encrypted local session cache: {err}"))?;
-        let decrypted = decrypt_local_secret_bytes(&encrypted)?;
+        let decrypted = Zeroizing::new(decrypt_local_secret_bytes(&encrypted)?);
 
         return serde_json::from_slice::<StoredToken>(&decrypted)
             .map(Some)
@@ -1487,10 +1791,12 @@ fn save_token_to_file(raw: &str) -> Result<(), String> {
     }
 
     let encrypted = encrypt_local_secret_bytes(raw.as_bytes())?;
-    let encoded = format!("{ENCRYPTED_FILE_PREFIX}{}", BASE64_STANDARD.encode(encrypted));
+    let encoded = format!(
+        "{ENCRYPTED_FILE_PREFIX}{}",
+        BASE64_STANDARD.encode(encrypted)
+    );
 
-    fs::write(&path, encoded)
-        .map_err(|err| format!("Failed to write local session cache: {err}"))
+    fs::write(&path, encoded).map_err(|err| format!("Failed to write local session cache: {err}"))
 }
 
 fn delete_token_file() -> Result<(), String> {
@@ -1500,8 +1806,7 @@ fn delete_token_file() -> Result<(), String> {
         return Ok(());
     }
 
-    fs::remove_file(&path)
-        .map_err(|err| format!("Failed to delete local session cache: {err}"))
+    fs::remove_file(&path).map_err(|err| format!("Failed to delete local session cache: {err}"))
 }
 
 fn token_cache_path() -> Result<PathBuf, String> {
@@ -1521,7 +1826,6 @@ fn web_cookie_cache_path() -> Result<PathBuf, String> {
 
     Ok(base_dir.join(SESSION_CACHE_DIR).join(WEB_COOKIE_CACHE_FILE))
 }
-
 
 fn device_key_cache_path() -> Result<PathBuf, String> {
     let base_dir = std::env::var_os("APPDATA")
@@ -1548,6 +1852,36 @@ mod tests {
     fn generated_pkce_verifier_is_valid_length_and_charset() {
         let verifier = generate_pkce_verifier().expect("verifier generation");
         assert_eq!(verifier.len(), 43);
-        assert!(verifier.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte)));
+        assert!(verifier
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte)));
+    }
+
+    #[test]
+    fn oauth_authorize_url_does_not_request_unsupported_scope() {
+        let config = OAuthClientConfig {
+            client_id: "test-client".to_string(),
+            redirect_uri: "http://127.0.0.1:46231/oauth/callback".to_string(),
+        };
+        let authorize = build_oauth_authorize_url(&config, "test-state", "test-challenge")
+            .expect("authorize URL");
+        let url = Url::parse(&authorize.url).expect("valid authorize URL");
+        let query = url.query_pairs().collect::<BTreeMap<_, _>>();
+
+        assert!(!query.contains_key("scope"));
+        assert_eq!(
+            query.get("client_id").map(|value| value.as_ref()),
+            Some("test-client")
+        );
+        assert_eq!(
+            query.get("response_type").map(|value| value.as_ref()),
+            Some("code")
+        );
+        assert_eq!(
+            query
+                .get("code_challenge_method")
+                .map(|value| value.as_ref()),
+            Some("S256")
+        );
     }
 }

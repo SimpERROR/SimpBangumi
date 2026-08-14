@@ -5,6 +5,8 @@ export type SubjectTypeFilter = 1 | 2 | 3 | 4 | 6 | "all";
 export type CollectionTypeFilter = 1 | 2 | 3 | 4 | 5 | "all";
 export type TitlePreference = "translated" | "original";
 
+export const NSFW_FIRST_NOTICE_SEEN_KEY = "bangumi.live2d.nsfwFirstNoticeSeen";
+
 const theme = ref<ThemeMode>("light");
 const loading = ref(false);
 const error = ref("");
@@ -17,6 +19,10 @@ const toast = reactive({
   visible: false,
   message: "",
   type: "error" as "error" | "success" | "info",
+});
+const cookieSetupPrompt = reactive({
+  visible: false,
+  feature: "",
 });
 const windowState = reactive({
   maximized: false,
@@ -31,6 +37,8 @@ const live2dRefreshDialogCounter = ref(0);
 
 // 详情页「回到顶部」按钮是否可见 → 看板娘需左移避让
 const detailBackToTopVisible = ref(false);
+// 详情抽屉打开时让看板娘鼠标穿透，避免遮挡抽屉操作。
+const detailDrawerOpen = ref(false);
 
 // NSFW 互动
 const nsfwInteractionEnabled = ref(true);
@@ -48,25 +56,39 @@ const collectionSaveSuccessCounter = ref(0);
 // 更新选项
 const checkUpdateOnStartup = ref(true);
 
+// 收藏与进度
+const AUTO_MARK_EPISODES_SEEN_KEY = "bangumi.collection.autoMarkEpisodesSeen";
+const autoMarkEpisodesSeen = ref(loadBool(AUTO_MARK_EPISODES_SEEN_KEY, false));
+function setAutoMarkEpisodesSeen(value: boolean) {
+  autoMarkEpisodesSeen.value = value;
+  saveBool(AUTO_MARK_EPISODES_SEEN_KEY, value);
+}
+
 // 收藏条目特殊标记
 const MARK_BROADCAST_KEY = "bangumi.display.markBroadcastFollowed";
 const MARK_BROADCAST_COMPLETE_KEY = "bangumi.display.markBroadcastFollowedInComplete";
 const MARK_BROADCAST_COLLECTIONS_KEY = "bangumi.display.markBroadcastFollowedOnlyWhenFiltered";
+const MARK_BROADCAST_INDEX_KEY = "bangumi.display.markBroadcastFollowedInIndex";
 const MARK_WATCHING_KEY = "bangumi.display.markWatching";
 const MARK_WATCHING_COMPLETE_KEY = "bangumi.display.markWatchingInComplete";
 const MARK_WATCHING_COLLECTIONS_KEY = "bangumi.display.markWatchingOnlyWhenFiltered";
+const MARK_WATCHING_INDEX_KEY = "bangumi.display.markWatchingInIndex";
 const MARK_WISH_KEY = "bangumi.display.markWish";
 const MARK_WISH_COMPLETE_KEY = "bangumi.display.markWishInComplete";
 const MARK_WISH_COLLECTIONS_KEY = "bangumi.display.markWishInCollections";
+const MARK_WISH_INDEX_KEY = "bangumi.display.markWishInIndex";
 const MARK_COLLECTED_KEY = "bangumi.display.markCollected";
 const MARK_COLLECTED_COMPLETE_KEY = "bangumi.display.markCollectedInComplete";
 const MARK_COLLECTED_COLLECTIONS_KEY = "bangumi.display.markCollectedInCollections";
+const MARK_COLLECTED_INDEX_KEY = "bangumi.display.markCollectedInIndex";
 const MARK_ONHOLD_KEY = "bangumi.display.markOnhold";
 const MARK_ONHOLD_COMPLETE_KEY = "bangumi.display.markOnholdInComplete";
 const MARK_ONHOLD_COLLECTIONS_KEY = "bangumi.display.markOnholdInCollections";
+const MARK_ONHOLD_INDEX_KEY = "bangumi.display.markOnholdInIndex";
 const MARK_DROPPED_KEY = "bangumi.display.markDropped";
 const MARK_DROPPED_COMPLETE_KEY = "bangumi.display.markDroppedInComplete";
 const MARK_DROPPED_COLLECTIONS_KEY = "bangumi.display.markDroppedInCollections";
+const MARK_DROPPED_INDEX_KEY = "bangumi.display.markDroppedInIndex";
 
 function loadBool(key: string, fallback = true): boolean {
   try {
@@ -88,31 +110,36 @@ interface MarkerGroup {
   parent: ReturnType<typeof ref<boolean>>;
   inComplete: ReturnType<typeof ref<boolean>>;
   inCollections: ReturnType<typeof ref<boolean>>;
+  inIndex: ReturnType<typeof ref<boolean>>;
   setParent: (v: boolean) => void;
   setInComplete: (v: boolean) => void;
   setInCollections: (v: boolean) => void;
+  setInIndex: (v: boolean) => void;
 }
 
-function markerGroup(parentKey: string, completeKey: string, collectionsKey: string, defaultParent: boolean): MarkerGroup {
+function markerGroup(parentKey: string, completeKey: string, collectionsKey: string, indexKey: string, defaultParent: boolean): MarkerGroup {
   const parent = ref(loadBool(parentKey, defaultParent));
   const inComplete = ref(loadBool(completeKey, false));
   const inCollections = ref(loadBool(collectionsKey, false));
+  const inIndex = ref(loadBool(indexKey, true));
   return {
     parent,
     inComplete,
     inCollections,
+    inIndex,
     setParent: (v: boolean) => { parent.value = v; saveBool(parentKey, v); },
     setInComplete: (v: boolean) => { inComplete.value = v; saveBool(completeKey, v); },
     setInCollections: (v: boolean) => { inCollections.value = v; saveBool(collectionsKey, v); },
+    setInIndex: (v: boolean) => { inIndex.value = v; saveBool(indexKey, v); },
   };
 }
 
-const broadcastMarker = markerGroup(MARK_BROADCAST_KEY, MARK_BROADCAST_COMPLETE_KEY, MARK_BROADCAST_COLLECTIONS_KEY, true);
-const watchingMarker = markerGroup(MARK_WATCHING_KEY, MARK_WATCHING_COMPLETE_KEY, MARK_WATCHING_COLLECTIONS_KEY, true);
-const wishMarker = markerGroup(MARK_WISH_KEY, MARK_WISH_COMPLETE_KEY, MARK_WISH_COLLECTIONS_KEY, true);
-const collectedMarker = markerGroup(MARK_COLLECTED_KEY, MARK_COLLECTED_COMPLETE_KEY, MARK_COLLECTED_COLLECTIONS_KEY, true);
-const onholdMarker = markerGroup(MARK_ONHOLD_KEY, MARK_ONHOLD_COMPLETE_KEY, MARK_ONHOLD_COLLECTIONS_KEY, true);
-const droppedMarker = markerGroup(MARK_DROPPED_KEY, MARK_DROPPED_COMPLETE_KEY, MARK_DROPPED_COLLECTIONS_KEY, true);
+const broadcastMarker = markerGroup(MARK_BROADCAST_KEY, MARK_BROADCAST_COMPLETE_KEY, MARK_BROADCAST_COLLECTIONS_KEY, MARK_BROADCAST_INDEX_KEY, true);
+const watchingMarker = markerGroup(MARK_WATCHING_KEY, MARK_WATCHING_COMPLETE_KEY, MARK_WATCHING_COLLECTIONS_KEY, MARK_WATCHING_INDEX_KEY, true);
+const wishMarker = markerGroup(MARK_WISH_KEY, MARK_WISH_COMPLETE_KEY, MARK_WISH_COLLECTIONS_KEY, MARK_WISH_INDEX_KEY, true);
+const collectedMarker = markerGroup(MARK_COLLECTED_KEY, MARK_COLLECTED_COMPLETE_KEY, MARK_COLLECTED_COLLECTIONS_KEY, MARK_COLLECTED_INDEX_KEY, true);
+const onholdMarker = markerGroup(MARK_ONHOLD_KEY, MARK_ONHOLD_COMPLETE_KEY, MARK_ONHOLD_COLLECTIONS_KEY, MARK_ONHOLD_INDEX_KEY, true);
+const droppedMarker = markerGroup(MARK_DROPPED_KEY, MARK_DROPPED_COMPLETE_KEY, MARK_DROPPED_COLLECTIONS_KEY, MARK_DROPPED_INDEX_KEY, true);
 
 // OAuth Workers 通信全屏弹窗
 const workersCommunicating = ref(false);
@@ -157,6 +184,15 @@ function hideToast() {
   }
 }
 
+function showCookieSetupPrompt(feature: string) {
+  cookieSetupPrompt.feature = feature;
+  cookieSetupPrompt.visible = true;
+}
+
+function hideCookieSetupPrompt() {
+  cookieSetupPrompt.visible = false;
+}
+
 export function useAppStore() {
   return {
     theme,
@@ -170,12 +206,16 @@ export function useAppStore() {
     toast,
     showToast,
     hideToast,
+    cookieSetupPrompt,
+    showCookieSetupPrompt,
+    hideCookieSetupPrompt,
     window: windowState,
     live2dEnabled,
     live2dOperationLocked,
     live2dResetPositionCounter,
     live2dRefreshDialogCounter,
     detailBackToTopVisible,
+    detailDrawerOpen,
     nsfwInteractionEnabled,
     nsfwWarningMessages,
     nsfwBrowsingMessages,
@@ -191,6 +231,8 @@ export function useAppStore() {
     live2dAutoSpeakMinInterval,
     live2dAutoSpeakMaxInterval,
     checkUpdateOnStartup,
+    autoMarkEpisodesSeen,
+    setAutoMarkEpisodesSeen,
     workersCommunicating,
     // marker groups
     broadcastMarker,

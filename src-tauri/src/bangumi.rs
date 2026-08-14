@@ -19,11 +19,10 @@ pub struct BangumiUser {
 
 pub struct BangumiClient {
     http: reqwest::Client,
-    access_token: Option<String>,
 }
 
 impl BangumiClient {
-    pub fn new(access_token: Option<String>) -> Result<Self, String> {
+    pub fn new() -> Result<Self, String> {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::ACCEPT,
@@ -36,23 +35,24 @@ impl BangumiClient {
             .build()
             .map_err(|err| format!("Failed to build Bangumi HTTP client: {err}"))?;
 
-        Ok(Self { http, access_token })
+        Ok(Self { http })
     }
 
-    pub async fn me(&self) -> Result<BangumiUser, String> {
-        self.get_json("/v0/me", None).await
+    pub async fn me(&self, access_token: &str) -> Result<BangumiUser, String> {
+        self.get_json("/v0/me", None, Some(access_token)).await
     }
 
     pub async fn get_json<T>(
         &self,
         path: &str,
         query: Option<BTreeMap<String, String>>,
+        access_token: Option<&str>,
     ) -> Result<T, String>
     where
         T: for<'de> Deserialize<'de>,
     {
         let value = self
-            .request_json(Method::GET, path, query, None)
+            .request_json(Method::GET, path, query, None, access_token)
             .await?;
 
         serde_json::from_value(value)
@@ -65,11 +65,12 @@ impl BangumiClient {
         path: &str,
         query: Option<BTreeMap<String, String>>,
         body: Option<Value>,
+        access_token: Option<&str>,
     ) -> Result<Value, String> {
         let url = api_url(path, query)?;
         let mut request = self.http.request(method, url);
 
-        if let Some(token) = self.access_token.as_deref() {
+        if let Some(token) = access_token {
             request = request.bearer_auth(token);
         }
 
@@ -121,9 +122,7 @@ fn strip_null_fields(value: Value) -> Value {
                 .collect();
             Value::Object(cleaned)
         }
-        Value::Array(arr) => {
-            Value::Array(arr.into_iter().map(strip_null_fields).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.into_iter().map(strip_null_fields).collect()),
         other => other,
     }
 }

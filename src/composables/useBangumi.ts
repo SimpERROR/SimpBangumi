@@ -6,13 +6,14 @@ import {
   type CharacterPerson,
   type CharacterSearchParams,
   type Episode,
-  type OAuthLoginStatus,
+  type OAuthFinishStatus,
   type OAuthStartLoginRequest,
   type MonoType,
   type PersonCareer,
   type PersonDetail,
   type PersonSearchParams,
   type PagedResponse,
+  type PageParams,
   type SubjectCommentInterestType,
   type SearchCharacter,
   type SearchPerson,
@@ -31,8 +32,15 @@ import {
   type CalendarDay,
   type WebCookieStatus,
   type WebCookieValidationStatus,
-  type WorkerOAuthTokenRequest,
+  type BangumiIndex,
+  type IndexBasicInfo,
+  type IndexSubject,
+  type IndexSubjectAddInfo,
+  type IndexSubjectEditInfo,
+  type UserCharacterCollection,
+  type UserPersonCollection,
 } from "../api/bangumi";
+import { useAppStore } from "../stores/app";
 
 export type ApiResult<T> =
   | { ok: true; data: T; error: null }
@@ -51,6 +59,27 @@ function fail<T>(error: unknown): ApiResult<T> {
 }
 
 export function useBangumi() {
+  const appStore = useAppStore();
+
+  async function hasWebCookie(feature: string): Promise<boolean> {
+    const status = await getWebCookieStatus();
+    if (!status.ok || status.data.configured) {
+      return true;
+    }
+
+    appStore.showCookieSetupPrompt(feature);
+    return false;
+  }
+
+  function promptForMissingWebCookie(error: unknown, feature: string): boolean {
+    const message = getErrorMessage(error).toLowerCase();
+    if (message.includes("no saved bangumi web cookie")) {
+      appStore.showCookieSetupPrompt(feature);
+      return true;
+    }
+    return false;
+  }
+
   async function getSession(): Promise<ApiResult<AuthSession>> {
     try {
       return ok(await bangumiApi.getAuthSession());
@@ -161,6 +190,159 @@ export function useBangumi() {
     }
   }
 
+  async function getUserCharacterCollections(username?: string): Promise<ApiResult<PagedResponse<UserCharacterCollection>>> {
+    try {
+      const response = await bangumiApi.getUserCharacterCollections(username);
+      return ok({ ...response, data: response.data ?? [] });
+    } catch (error) {
+      return fail<PagedResponse<UserCharacterCollection>>(error);
+    }
+  }
+
+  async function isCharacterCollected(characterId: number): Promise<ApiResult<boolean>> {
+    try {
+      await bangumiApi.getUserCharacterCollection(characterId);
+      return ok(true);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return message.includes("404") ? ok(false) : fail<boolean>(error);
+    }
+  }
+
+  async function setCharacterCollected(characterId: number, collected: boolean): Promise<ApiResult<null>> {
+    try {
+      return ok(collected
+        ? await bangumiApi.collectCharacter(characterId)
+        : await bangumiApi.uncollectCharacter(characterId));
+    } catch (error) {
+      if (promptForMissingWebCookie(error, "取消收藏角色（API 失败后的网页回退）")) {
+        return fail<null>("取消收藏角色的 API 调用失败，网页回退需要 Bangumi 网页 Cookie。");
+      }
+      return fail<null>(error);
+    }
+  }
+
+  async function getUserPersonCollections(username?: string): Promise<ApiResult<PagedResponse<UserPersonCollection>>> {
+    try {
+      const response = await bangumiApi.getUserPersonCollections(username);
+      return ok({ ...response, data: response.data ?? [] });
+    } catch (error) {
+      return fail<PagedResponse<UserPersonCollection>>(error);
+    }
+  }
+
+  async function isPersonCollected(personId: number): Promise<ApiResult<boolean>> {
+    try {
+      await bangumiApi.getUserPersonCollection(personId);
+      return ok(true);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return message.includes("404") ? ok(false) : fail<boolean>(error);
+    }
+  }
+
+  async function setPersonCollected(personId: number, collected: boolean): Promise<ApiResult<null>> {
+    try {
+      return ok(collected
+        ? await bangumiApi.collectPerson(personId)
+        : await bangumiApi.uncollectPerson(personId));
+    } catch (error) {
+      if (promptForMissingWebCookie(error, "取消收藏人物（API 失败后的网页回退）")) {
+        return fail<null>("取消收藏人物的 API 调用失败，网页回退需要 Bangumi 网页 Cookie。");
+      }
+      return fail<null>(error);
+    }
+  }
+
+  async function createIndex(info: IndexBasicInfo): Promise<ApiResult<BangumiIndex>> {
+    try {
+      const created = await bangumiApi.createIndex();
+      if (!info.title && !info.description) return ok(created);
+      return ok(await bangumiApi.editIndex(created.id, info));
+    } catch (error) {
+      return fail<BangumiIndex>(error);
+    }
+  }
+
+  async function getIndex(indexId: number): Promise<ApiResult<BangumiIndex>> {
+    try {
+      return ok(await bangumiApi.getIndex(indexId));
+    } catch (error) {
+      return fail<BangumiIndex>(error);
+    }
+  }
+
+  async function editIndex(indexId: number, info: IndexBasicInfo): Promise<ApiResult<BangumiIndex>> {
+    try {
+      return ok(await bangumiApi.editIndex(indexId, info));
+    } catch (error) {
+      return fail<BangumiIndex>(error);
+    }
+  }
+
+  async function deleteIndex(indexId: number): Promise<ApiResult<null>> {
+    try {
+      return ok(await bangumiApi.deleteIndex(indexId));
+    } catch (error) {
+      return fail<null>(error);
+    }
+  }
+
+  async function getIndexSubjects(
+    indexId: number,
+    params: PageParams & { type?: number } = {},
+  ): Promise<ApiResult<PagedResponse<IndexSubject>>> {
+    try {
+      const response = await bangumiApi.getIndexSubjects(indexId, params);
+      return ok(Array.isArray(response)
+        ? { data: response, total: response.length, limit: params.limit, offset: params.offset }
+        : { ...response, data: response.data ?? [] });
+    } catch (error) {
+      return fail<PagedResponse<IndexSubject>>(error);
+    }
+  }
+
+  async function addSubjectToIndex(indexId: number, info: IndexSubjectAddInfo): Promise<ApiResult<null>> {
+    try {
+      return ok(await bangumiApi.addSubjectToIndex(indexId, info));
+    } catch (error) {
+      return fail<null>(error);
+    }
+  }
+
+  async function editIndexSubject(
+    indexId: number,
+    subjectId: number,
+    info: IndexSubjectEditInfo,
+  ): Promise<ApiResult<null>> {
+    try {
+      return ok(await bangumiApi.editIndexSubject(indexId, subjectId, info));
+    } catch (error) {
+      return fail<null>(error);
+    }
+  }
+
+  async function deleteIndexSubject(indexId: number, subjectId: number): Promise<ApiResult<null>> {
+    try {
+      return ok(await bangumiApi.deleteIndexSubject(indexId, subjectId));
+    } catch (error) {
+      return fail<null>(error);
+    }
+  }
+
+  async function setIndexCollected(indexId: number, collected: boolean): Promise<ApiResult<null>> {
+    try {
+      return ok(collected
+        ? await bangumiApi.collectIndex(indexId)
+        : await bangumiApi.uncollectIndex(indexId));
+    } catch (error) {
+      if (promptForMissingWebCookie(error, "取消收藏目录（API 失败后的网页回退）")) {
+        return fail<null>("取消收藏目录的 API 调用失败，网页回退需要 Bangumi 网页 Cookie。");
+      }
+      return fail<null>(error);
+    }
+  }
+
   async function fetchSubjectCommentsPage(
     subjectId: number,
     interestType?: SubjectCommentInterestType,
@@ -180,6 +362,102 @@ export function useBangumi() {
   ): Promise<ApiResult<string>> {
     try {
       return ok(await bangumiApi.fetchMonoCommentsPage(monoType, monoId, page));
+    } catch (error) {
+      return fail<string>(error);
+    }
+  }
+
+  async function fetchUserIndicesPage(
+    username: string,
+    collected = false,
+    page = 1,
+  ): Promise<ApiResult<string>> {
+    try {
+      return ok(await bangumiApi.fetchUserIndicesPage(username, collected, page));
+    } catch (error) {
+      return fail<string>(error);
+    }
+  }
+
+  function isWebCookieExpiredError(error: unknown): boolean {
+    const message = getErrorMessage(error).toLowerCase();
+    return message.includes("cookie")
+      && (message.includes("expired") || message.includes("invalid") || message.includes("login"));
+  }
+
+  async function refreshWebCookieSilently(): Promise<boolean> {
+    try {
+      await bangumiApi.refreshWebCookie();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function fetchIndexPage(indexId: number): Promise<ApiResult<string>> {
+    const feature = "查看目录内容";
+    if (!await hasWebCookie(feature)) {
+      return fail<string>("此功能需要先配置 Bangumi 网页 Cookie。");
+    }
+    await refreshWebCookieSilently();
+    try {
+      return ok(await bangumiApi.fetchIndexPage(indexId));
+    } catch (error) {
+      if (isWebCookieExpiredError(error) && await refreshWebCookieSilently()) {
+        try {
+          return ok(await bangumiApi.fetchIndexPage(indexId));
+        } catch (retryError) {
+          appStore.showCookieSetupPrompt(feature);
+          return fail<string>(retryError);
+        }
+      }
+      if (isWebCookieExpiredError(error)) appStore.showCookieSetupPrompt(feature);
+      return fail<string>(error);
+    }
+  }
+
+  async function fetchSubjectPage(subjectId: number): Promise<ApiResult<string>> {
+    const feature = "查看条目详情";
+    if (!await hasWebCookie(feature)) {
+      return fail<string>("此功能需要先配置 Bangumi 网页 Cookie。");
+    }
+    try {
+      return ok(await bangumiApi.fetchSubjectPage(subjectId));
+    } catch (error) {
+      if (isWebCookieExpiredError(error) && await refreshWebCookieSilently()) {
+        try {
+          return ok(await bangumiApi.fetchSubjectPage(subjectId));
+        } catch (retryError) {
+          appStore.showCookieSetupPrompt(feature);
+          return fail<string>(retryError);
+        }
+      }
+      if (isWebCookieExpiredError(error)) appStore.showCookieSetupPrompt(feature);
+      return fail<string>(error);
+    }
+  }
+  async function addIndexEntityViaWeb(
+    indexId: number,
+    entityType: "character" | "person",
+    entityId: number,
+  ): Promise<ApiResult<null>> {
+    if (!await hasWebCookie(`将${entityType === "character" ? "角色" : "人物"}加入目录`)) {
+      return fail<null>("此功能需要先配置 Bangumi 网页 Cookie。");
+    }
+    try {
+      return ok(await bangumiApi.addIndexEntityViaWeb(indexId, entityType, entityId));
+    } catch (error) {
+      return fail<null>(error);
+    }
+  }
+
+  async function fetchUserMonoCollectionsPage(
+    username: string,
+    monoType: MonoType,
+    page = 1,
+  ): Promise<ApiResult<string>> {
+    try {
+      return ok(await bangumiApi.fetchUserMonoCollectionsPage(username, monoType, page));
     } catch (error) {
       return fail<string>(error);
     }
@@ -292,19 +570,17 @@ export function useBangumi() {
     }
   }
 
-  async function waitOAuthLoginResult(): Promise<ApiResult<OAuthLoginStatus>> {
+  async function finishOAuthLogin(): Promise<ApiResult<OAuthFinishStatus>> {
     try {
-      return ok(await bangumiApi.waitOAuthLoginResult());
+      return ok(await bangumiApi.finishOAuthLogin());
     } catch (error) {
-      return fail<OAuthLoginStatus>(error);
+      return fail<OAuthFinishStatus>(error);
     }
   }
 
-  async function loginWithWorkerToken(
-    request: WorkerOAuthTokenRequest,
-  ): Promise<ApiResult<AuthSession>> {
+  async function refreshOAuthSession(): Promise<ApiResult<AuthSession>> {
     try {
-      return ok(await bangumiApi.loginWithWorkerToken(request));
+      return ok(await bangumiApi.refreshOAuthSession());
     } catch (error) {
       return fail<AuthSession>(error);
     }
@@ -390,14 +666,25 @@ export function useBangumi() {
     }
   }
 
+  async function fetchAnimeBrowserPage(
+    sort: "trends" | "rank",
+    page = 1,
+  ): Promise<ApiResult<string>> {
+    try {
+      return ok(await bangumiApi.fetchAnimeBrowserPage(sort, page));
+    } catch (error) {
+      return fail<string>(error);
+    }
+  }
+
   return {
     getSession,
     getMe,
     getCollections,
     loginWithPersonalAccessToken,
     startOAuthLogin,
-    waitOAuthLoginResult,
-    loginWithWorkerToken,
+    finishOAuthLogin,
+    refreshOAuthSession,
     logout,
     getWebCookieStatus,
     saveWebCookie,
@@ -411,8 +698,28 @@ export function useBangumi() {
     getPersonDetail,
     getCharacterDetail,
     getCharacterRelatedPersons,
+    getUserCharacterCollections,
+    isCharacterCollected,
+    setCharacterCollected,
+    getUserPersonCollections,
+    isPersonCollected,
+    setPersonCollected,
+    createIndex,
+    getIndex,
+    editIndex,
+    deleteIndex,
+    getIndexSubjects,
+    addSubjectToIndex,
+    editIndexSubject,
+    deleteIndexSubject,
+    setIndexCollected,
     fetchSubjectCommentsPage,
     fetchMonoCommentsPage,
+    fetchUserIndicesPage,
+    fetchIndexPage,
+    fetchSubjectPage,
+    addIndexEntityViaWeb,
+    fetchUserMonoCollectionsPage,
     getSubjectRelatedCharacters,
     getSubjectRelatedPersons,
     getCurrentUserSubjectCollection,
@@ -424,5 +731,6 @@ export function useBangumi() {
     searchCharacters,
     searchPersons,
     getCalendar,
+    fetchAnimeBrowserPage,
   };
 }

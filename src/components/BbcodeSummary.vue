@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { renderBbcodeText } from "../utils/bbcode";
 
 const props = withDefaults(defineProps<{
@@ -13,18 +13,54 @@ const props = withDefaults(defineProps<{
 });
 
 const expanded = ref(false);
+const contentWrapRef = ref<HTMLElement | null>(null);
 const maskTipVisible = ref(false);
 const maskTipX = ref(0);
 const maskTipY = ref(0);
+let heightResetTimer: number | undefined;
 
 const summaryHtml = computed(() => renderBbcodeText(props.content));
 const summaryLength = computed(() => (props.content ?? "").trim().length);
 const canCollapse = computed(() => summaryLength.value > props.collapseThreshold);
 
 function toggleExpanded() {
-  expanded.value = !expanded.value;
+  const contentWrap = contentWrapRef.value;
+  if (!contentWrap || !canCollapse.value) {
+    expanded.value = !expanded.value;
+    return;
+  }
+
+  const nextExpanded = !expanded.value;
+  const currentHeight = contentWrap.getBoundingClientRect().height;
+
+  window.clearTimeout(heightResetTimer);
+  contentWrap.style.height = String(currentHeight) + "px";
+  void contentWrap.offsetHeight;
+  expanded.value = nextExpanded;
+
+  void nextTick(() => {
+    const targetHeight = nextExpanded ? contentWrap.scrollHeight : getCollapsedHeight(contentWrap);
+    requestAnimationFrame(() => {
+      contentWrap.style.height = String(targetHeight) + "px";
+    });
+    if (nextExpanded) {
+      heightResetTimer = window.setTimeout(() => {
+        contentWrap.style.height = "";
+      }, 360);
+    }
+  });
 }
 
+function getCollapsedHeight(element: HTMLElement) {
+  const collapsedHeight = props.collapsedMaxHeight;
+  const value = Number.parseFloat(collapsedHeight);
+  const maxHeight = collapsedHeight.endsWith("em")
+    ? value * Number.parseFloat(getComputedStyle(element).fontSize)
+    : collapsedHeight.endsWith("px")
+      ? value
+      : element.clientHeight;
+  return Math.min(element.scrollHeight, maxHeight);
+}
 function hideMaskTip() {
   maskTipVisible.value = false;
 }
@@ -54,12 +90,21 @@ function onContainerMouseMove(event: MouseEvent) {
     @mousemove="onContainerMouseMove"
     @mouseleave="hideMaskTip"
   >
-    <p
-      class="bbcode-content bbcode-summary__content"
-      :class="{ 'is-collapsed': canCollapse && !expanded }"
-      :style="canCollapse && !expanded ? { maxHeight: collapsedMaxHeight } : undefined"
-      v-html="summaryHtml"
-    ></p>
+    <div
+      ref="contentWrapRef"
+      class="bbcode-summary__content-wrap"
+      :class="{
+        'is-collapsed': canCollapse && !expanded,
+        'is-expanded': canCollapse && expanded,
+      }"
+      :style="canCollapse ? { '--bbcode-collapsed-height': props.collapsedMaxHeight } : undefined"
+    >
+      <p
+        class="bbcode-content bbcode-summary__content"
+        :class="{ 'is-collapsed': canCollapse && !expanded }"
+        v-html="summaryHtml"
+      ></p>
+    </div>
 
     <button
       v-if="canCollapse"

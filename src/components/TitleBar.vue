@@ -47,7 +47,16 @@ async function onTitleBarDoubleClick(event: MouseEvent) {
         aria-label="切换主题"
         @click="toggleTheme"
       >
-        {{ appStore.theme.value === "light" ? "深色" : "浅色" }}
+        <span class="window-icon" aria-hidden="true">
+          <svg v-if="appStore.theme.value === 'light'" viewBox="0 0 16 16">
+            <path d="M13.8 9.3A6 6 0 1 1 6.7 2.2a5 5 0 0 0 7.1 7.1z" />
+          </svg>
+          <svg v-else viewBox="0 0 16 16">
+            <circle cx="8" cy="8" r="3" />
+            <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4l1.4-1.4M11 5l1.4-1.4" />
+          </svg>
+        </span>
+        <span>{{ appStore.theme.value === "light" ? "深色" : "浅色" }}</span>
       </button>
       <button
         class="icon-button"

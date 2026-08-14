@@ -5,19 +5,170 @@ mod mal_scraper;
 
 use std::collections::BTreeMap;
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::Method;
 use serde_json::Value;
 use tauri::Manager;
 use url::Url;
 
 use auth::{
-    AuthSession, OAuthAuthorizeUrl, OAuthLoginStatus, OAuthStartLoginRequest,
-    WebCookieStatus,
-    WorkerExchangeCodeRequest, WorkerExchangeTokenResponse, WorkerOAuthTokenRequest,
-    WorkerRefreshTokenRequest,
+    AuthSession, OAuthAuthorizeUrl, OAuthFinishStatus, OAuthStartLoginRequest, WebCookieStatus,
 };
 use bangumi::{BangumiClient, BangumiUser};
 use tauri::webview::PageLoadEvent;
+
+struct ApiState {
+    client: BangumiClient,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemAudioOutputStatus {
+    muted: bool,
+    volume: f32,
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn system_audio_output_status() -> Result<SystemAudioOutputStatus, String> {
+    use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator};
+    use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    };
+
+    unsafe {
+        let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let result = (|| -> windows::core::Result<SystemAudioOutputStatus> {
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+            let endpoint = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
+            let volume: IAudioEndpointVolume = endpoint.Activate(CLSCTX_ALL, None)?;
+            Ok(SystemAudioOutputStatus {
+                muted: volume.GetMute()?.as_bool(),
+                volume: volume.GetMasterVolumeLevelScalar()?,
+            })
+        })();
+        if initialized {
+            CoUninitialize();
+        }
+        result.map_err(|error| format!("Unable to read system audio output: {error}"))
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn system_audio_output_status() -> Result<SystemAudioOutputStatus, String> {
+    Err("System audio output detection is only available on Windows".to_string())
+}
+
+impl ApiState {
+    fn new() -> Result<Self, String> {
+        Ok(Self {
+            client: BangumiClient::new()?,
+        })
+    }
+}
+
+const MAX_SAVED_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_ANALYZED_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+
+#[tauri::command]
+async fn bangumi_fetch_image_data_url(url: String) -> Result<String, String> {
+    let parsed = Url::parse(&url).map_err(|error| format!("Invalid image URL: {error}"))?;
+    if parsed.scheme() != "https" {
+        return Err("Only HTTPS Bangumi images can be analyzed".to_string());
+    }
+    let host = parsed
+        .host_str()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(host.as_str(), "lain.bgm.tv" | "lain.bangumi.tv" | "lain.chii.in") {
+        return Err("Image host is not an allowed Bangumi image domain".to_string());
+    }
+
+    let response = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .build()
+        .map_err(|error| format!("Failed to build image analysis client: {error}"))?
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to download image for analysis: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Image server returned an error: {error}"))?;
+
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_ANALYZED_IMAGE_BYTES)
+    {
+        return Err("Image is larger than the analysis limit".to_string());
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .unwrap_or("image/jpeg")
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(content_type.as_str(), "image/jpeg" | "image/png" | "image/webp" | "image/gif") {
+        return Err("Unsupported image content type".to_string());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("Failed to read image data: {error}"))?;
+    if bytes.len() as u64 > MAX_ANALYZED_IMAGE_BYTES {
+        return Err("Image is larger than the analysis limit".to_string());
+    }
+    Ok(format!(
+        "data:{content_type};base64,{}",
+        BASE64_STANDARD.encode(bytes)
+    ))
+}
+
+#[tauri::command]
+async fn save_image_to_path(url: String, path: String) -> Result<(), String> {
+    let parsed = Url::parse(&url).map_err(|error| format!("Invalid image URL: {error}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("Only HTTP and HTTPS images can be saved".to_string());
+    }
+
+    let response = reqwest::Client::new()
+        .get(parsed)
+        .header(reqwest::header::USER_AGENT, "SimpBangumi/0.1")
+        .send()
+        .await
+        .map_err(|error| format!("Failed to download image: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Image server returned an error: {error}"))?;
+
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_SAVED_IMAGE_BYTES)
+    {
+        return Err("Image is larger than the 50 MB limit".to_string());
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("Failed to read image data: {error}"))?;
+    if bytes.len() as u64 > MAX_SAVED_IMAGE_BYTES {
+        return Err("Image is larger than the 50 MB limit".to_string());
+    }
+
+    std::fs::write(path, &bytes).map_err(|error| format!("Failed to write image: {error}"))
+}
+
+#[tauri::command]
+fn save_image_bytes_to_path(bytes: Vec<u8>, path: String) -> Result<(), String> {
+    if bytes.len() as u64 > MAX_SAVED_IMAGE_BYTES {
+        return Err("Image is larger than the 50 MB limit".to_string());
+    }
+    std::fs::write(path, bytes).map_err(|error| format!("Failed to write image: {error}"))
+}
 
 const WEB_LOGIN_WINDOW_LABEL: &str = "bangumi-web-login";
 const WEB_COOKIE_RECOVERY_WINDOW_LABEL_PREFIX: &str = "bangumi-web-cookie-recovery";
@@ -86,10 +237,14 @@ fn page_shows_auth_buttons(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
     let has_login_link = lower.contains("href=\"/login\"") || lower.contains("href='/login'");
     let has_signup_link = lower.contains("href=\"/signup\"") || lower.contains("href='/signup'");
-    let has_login_text = html.contains("登录") || lower.contains(">log in<") || lower.contains(">login<");
-    let has_signup_text = html.contains("注册") || lower.contains(">sign up<") || lower.contains(">signup<");
+    let has_login_text =
+        html.contains("登录") || lower.contains(">log in<") || lower.contains(">login<");
+    let has_signup_text =
+        html.contains("注册") || lower.contains(">sign up<") || lower.contains(">signup<");
 
-    (has_login_link && has_signup_link) || (has_login_link && has_login_text) || (has_signup_link && has_signup_text)
+    (has_login_link && has_signup_link)
+        || (has_login_link && has_login_text)
+        || (has_signup_link && has_signup_text)
 }
 
 fn format_backend_log(level: &str, message: &str) -> String {
@@ -104,6 +259,218 @@ fn format_backend_log(level: &str, message: &str) -> String {
         now.second(),
         now.millisecond(),
     )
+}
+
+fn page_shows_web_verification(html: &str) -> bool {
+    html.contains("cf-chl-") || html.contains("Enable JavaScript and cookies")
+}
+
+fn decode_html_url(value: &str) -> String {
+    value
+        .replace("&amp;", "&")
+        .replace("&#38;", "&")
+        .replace("&#x26;", "&")
+}
+
+fn find_mono_collection_action(
+    html: &str,
+    mono_type: &str,
+    mono_id: u64,
+    collected: bool,
+) -> Option<String> {
+    let action = if collected {
+        "collect"
+    } else {
+        "erase_collect"
+    };
+    let marker = format!("/{mono_type}/{mono_id}/{action}");
+    let start = html.find(&marker)?;
+    let tail = &html[start..];
+    let end = tail
+        .find(|character: char| {
+            character.is_ascii_whitespace() || matches!(character, '\"' | '\'' | '<' | '>')
+        })
+        .unwrap_or(tail.len());
+    let candidate = decode_html_url(&tail[..end]);
+
+    // The web action is protected by Bangumi's per-session form hash.
+    if candidate.contains("gh=") {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn find_index_collection_action(html: &str, index_id: u64, collected: bool) -> Option<String> {
+    let action = if collected {
+        "collect"
+    } else {
+        "erase_collect"
+    };
+    let marker = format!("/index/{index_id}/{action}");
+    let start = html.find(&marker)?;
+    let tail = &html[start..];
+    let end = tail
+        .find(|character: char| {
+            character.is_ascii_whitespace() || matches!(character, '\"' | '\'' | '<' | '>')
+        })
+        .unwrap_or(tail.len());
+    let candidate = decode_html_url(&tail[..end]);
+
+    candidate.contains("gh=").then_some(candidate)
+}
+
+fn html_attribute(tag: &str, attribute: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let attribute = attribute.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let mut search_from = 0;
+
+    while let Some(relative_start) = lower[search_from..].find(&attribute) {
+        let start = search_from + relative_start;
+        let before_is_boundary =
+            start == 0 || bytes[start - 1].is_ascii_whitespace() || bytes[start - 1] == b'<';
+        let mut cursor = start + attribute.len();
+        let after_is_boundary =
+            cursor == bytes.len() || bytes[cursor].is_ascii_whitespace() || bytes[cursor] == b'=';
+        if !before_is_boundary || !after_is_boundary {
+            search_from = start + attribute.len();
+            continue;
+        }
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'=') {
+            search_from = start + attribute.len();
+            continue;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let quote = *bytes.get(cursor)?;
+        if quote != b'\'' && quote != b'"' {
+            return None;
+        }
+        cursor += 1;
+        let end = bytes[cursor..].iter().position(|byte| *byte == quote)? + cursor;
+        return Some(decode_html_url(&tag[cursor..end]));
+    }
+
+    None
+}
+
+fn find_index_related_form(html: &str, index_id: u64, category: &str) -> Option<(String, String)> {
+    let expected_action = format!("/index/{index_id}/add_related");
+
+    html.match_indices("<form").find_map(|(start, _)| {
+        let tail = &html[start..];
+        let end = tail.find("</form>")? + 7;
+        let form = &tail[..end];
+        let opening_end = form.find('>')? + 1;
+        let action = html_attribute(&form[..opening_end], "action")?;
+        if action != expected_action {
+            return None;
+        }
+
+        let mut formhash = None;
+        let mut matches_category = false;
+        for (input_start, _) in form.match_indices("<input") {
+            let input_tail = &form[input_start..];
+            let input_end = input_tail.find('>')? + 1;
+            let input = &input_tail[..input_end];
+            match html_attribute(input, "name").as_deref() {
+                Some("formhash") => formhash = html_attribute(input, "value"),
+                Some("cat") => {
+                    matches_category = html_attribute(input, "value").as_deref() == Some(category)
+                }
+                _ => {}
+            }
+        }
+
+        if matches_category {
+            Some((action, formhash?))
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(test)]
+mod mono_collection_action_tests {
+    use super::{
+        find_index_collection_action, find_index_related_form, find_mono_collection_action,
+    };
+
+    #[test]
+    fn extracts_character_uncollect_action_and_decodes_query_separator() {
+        let html = r#"<a href="/character/13369/erase_collect?gh=abc&amp;ajax=1">取消收藏</a>"#;
+
+        assert_eq!(
+            find_mono_collection_action(html, "character", 13369, false).as_deref(),
+            Some("/character/13369/erase_collect?gh=abc&ajax=1")
+        );
+    }
+
+    #[test]
+    fn extracts_person_collect_action_without_matching_other_ids() {
+        let html = r#"<a href='/person/42/collect?gh=secret'>收藏人物</a>"#;
+
+        assert_eq!(
+            find_mono_collection_action(html, "person", 42, true).as_deref(),
+            Some("/person/42/collect?gh=secret")
+        );
+        assert!(find_mono_collection_action(html, "person", 41, true).is_none());
+    }
+
+    #[test]
+    fn rejects_action_without_form_hash() {
+        let html = r#"<a href="/character/13369/erase_collect">取消收藏</a>"#;
+
+        assert!(find_mono_collection_action(html, "character", 13369, false).is_none());
+    }
+
+    #[test]
+    fn extracts_index_uncollect_action() {
+        let html = r#"<a href="/index/90607/erase_collect?gh=abc&amp;ajax=1">取消收藏</a>"#;
+
+        assert_eq!(
+            find_index_collection_action(html, 90607, false).as_deref(),
+            Some("/index/90607/erase_collect?gh=abc&ajax=1")
+        );
+    }
+
+    #[test]
+    fn extracts_character_and_person_index_related_forms() {
+        let html = r#"
+            <form method="post" action="/index/101917/add_related">
+                <input type="hidden" name="formhash" value="secret" />
+                <input type="hidden" name ="cat" value="1" />
+                <input name="add_related" type="text" />
+            </form>
+            <form method="post" action="/index/101917/add_related">
+                <input type="hidden" name="formhash" value="secret" />
+                <input type="hidden" name ="cat" value="2" />
+                <input name="add_related" type="text" />
+            </form>
+        "#;
+        assert_eq!(
+            find_index_related_form(html, 101917, "1"),
+            Some((
+                "/index/101917/add_related".to_string(),
+                "secret".to_string()
+            ))
+        );
+        assert_eq!(
+            find_index_related_form(html, 101917, "2"),
+            Some((
+                "/index/101917/add_related".to_string(),
+                "secret".to_string()
+            ))
+        );
+        assert!(find_index_related_form(html, 101917, "3").is_none());
+        assert!(find_index_related_form(html, 101918, "1").is_none());
+    }
 }
 
 pub(crate) fn log_info(message: &str) {
@@ -181,8 +548,7 @@ async fn fetch_with_cookie_redirect(
             .map(|s| s.to_string())
             .ok_or_else(|| format!("Redirect without Location header from {url}"))?;
 
-        let base = Url::parse(&url)
-            .map_err(|error| format!("Invalid base URL {url}: {error}"))?;
+        let base = Url::parse(&url).map_err(|error| format!("Invalid base URL {url}: {error}"))?;
         let next_url = base
             .join(&location)
             .map_err(|error| format!("Invalid redirect location {location}: {error}"))?;
@@ -191,7 +557,9 @@ async fn fetch_with_cookie_redirect(
             return Err("Cookie redirect target has no host".to_string());
         };
         if next_url.scheme() != "https" || !allowed_bangumi_host(host) {
-            return Err("Refusing to forward Bangumi Cookie to an untrusted redirect target".to_string());
+            return Err(
+                "Refusing to forward Bangumi Cookie to an untrusted redirect target".to_string(),
+            );
         }
         url = next_url.to_string();
     }
@@ -284,47 +652,44 @@ async fn open_hidden_bangumi_cookie_recovery_window(
     let signal = std::sync::Arc::new(std::sync::Mutex::new(Some(sender)));
     let signal_for_page_load = signal.clone();
 
-    let window = tauri::WebviewWindowBuilder::new(
-        app,
-        &label,
-        tauri::WebviewUrl::External(page_url),
-    )
-    .title("Bangumi 会话恢复")
-    .inner_size(980.0, 760.0)
-    .resizable(true)
-    .visible(false)
-    .focused(false)
-    .skip_taskbar(true)
-    .on_navigation(|url| {
-        if matches!(url.scheme(), "http" | "https") {
-            if let Some(host) = url.host_str() {
-                return allowed_bangumi_host(host);
-            }
-        }
+    let window =
+        tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::External(page_url))
+            .title("Bangumi 会话恢复")
+            .inner_size(980.0, 760.0)
+            .resizable(true)
+            .visible(false)
+            .focused(false)
+            .skip_taskbar(true)
+            .on_navigation(|url| {
+                if matches!(url.scheme(), "http" | "https") {
+                    if let Some(host) = url.host_str() {
+                        return allowed_bangumi_host(host);
+                    }
+                }
 
-        false
-    })
-    .on_page_load(move |_window, payload| {
-        if payload.event() != PageLoadEvent::Finished {
-            return;
-        }
+                false
+            })
+            .on_page_load(move |_window, payload| {
+                if payload.event() != PageLoadEvent::Finished {
+                    return;
+                }
 
-        let Some(host) = payload.url().host_str() else {
-            return;
-        };
+                let Some(host) = payload.url().host_str() else {
+                    return;
+                };
 
-        if !allowed_bangumi_host(host) {
-            return;
-        }
+                if !allowed_bangumi_host(host) {
+                    return;
+                }
 
-        if let Ok(mut guard) = signal_for_page_load.lock() {
-            if let Some(sender) = guard.take() {
-                let _ = sender.send(());
-            }
-        }
-    })
-    .build()
-    .map_err(|error| format!("Failed to open hidden Bangumi recovery window: {error}"))?;
+                if let Ok(mut guard) = signal_for_page_load.lock() {
+                    if let Some(sender) = guard.take() {
+                        let _ = sender.send(());
+                    }
+                }
+            })
+            .build()
+            .map_err(|error| format!("Failed to open hidden Bangumi recovery window: {error}"))?;
 
     let wait_result = tauri::async_runtime::spawn_blocking(move || {
         receiver.recv_timeout(std::time::Duration::from_secs(15))
@@ -348,9 +713,13 @@ async fn open_hidden_bangumi_cookie_recovery_window(
 async fn restore_web_cookie_from_embedded_session_impl(
     app: tauri::AppHandle,
 ) -> Result<WebCookieStatus, String> {
-    let (window, should_close_after_capture) = match app.get_webview_window(WEB_LOGIN_WINDOW_LABEL) {
+    let (window, should_close_after_capture) = match app.get_webview_window(WEB_LOGIN_WINDOW_LABEL)
+    {
         Some(existing) => (existing, false),
-        None => (open_hidden_bangumi_cookie_recovery_window(&app).await?, true),
+        None => (
+            open_hidden_bangumi_cookie_recovery_window(&app).await?,
+            true,
+        ),
     };
 
     let captured = capture_cookie_header_from_window(window.clone()).await;
@@ -362,7 +731,9 @@ async fn restore_web_cookie_from_embedded_session_impl(
     let header = captured?;
     let valid = validate_cookie_header_against_bangumi(&header).await?;
     if !valid {
-        return Err("应用内网页登录会话当前未检测到有效登录状态，无法自动恢复 Cookie。".to_string());
+        return Err(
+            "应用内网页登录会话当前未检测到有效登录状态，无法自动恢复 Cookie。".to_string(),
+        );
     }
 
     auth::save_web_cookie(header)
@@ -381,45 +752,41 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn bangumi_oauth_start_login(request: Option<OAuthStartLoginRequest>) -> Result<OAuthAuthorizeUrl, String> {
+fn bangumi_oauth_start_login(
+    request: Option<OAuthStartLoginRequest>,
+) -> Result<OAuthAuthorizeUrl, String> {
     log_info("invoke bangumi_oauth_start_login");
     let state = request.and_then(|value| value.state);
     auth::start_oauth_login(state)
 }
 
 #[tauri::command]
-fn bangumi_oauth_wait_login_result() -> Result<OAuthLoginStatus, String> {
-    auth::wait_oauth_login_result()
+async fn bangumi_login_with_pat(
+    state: tauri::State<'_, ApiState>,
+    token: String,
+) -> Result<AuthSession, String> {
+    auth::login_with_personal_access_token(&state.client, token).await
 }
 
 #[tauri::command]
-async fn bangumi_login_with_pat(token: String) -> Result<AuthSession, String> {
-    auth::login_with_personal_access_token(token).await
+async fn bangumi_oauth_finish_login(
+    state: tauri::State<'_, ApiState>,
+) -> Result<OAuthFinishStatus, String> {
+    auth::finish_oauth_login(&state.client).await
 }
 
 #[tauri::command]
-async fn bangumi_login_with_worker_token(request: WorkerOAuthTokenRequest) -> Result<AuthSession, String> {
-    auth::login_with_worker_token(request).await
-}
-
-#[tauri::command]
-async fn bangumi_worker_exchange_code(
-    request: WorkerExchangeCodeRequest,
-) -> Result<WorkerExchangeTokenResponse, String> {
-    auth::exchange_code_via_worker(request).await
-}
-
-#[tauri::command]
-async fn bangumi_worker_refresh_token(
-    request: WorkerRefreshTokenRequest,
-) -> Result<WorkerExchangeTokenResponse, String> {
-    auth::refresh_token_via_worker(request).await
+async fn bangumi_refresh_oauth_session(
+    state: tauri::State<'_, ApiState>,
+) -> Result<AuthSession, String> {
+    auth::refresh_saved_oauth_session_if_current(&state.client, None).await
 }
 
 #[tauri::command]
 fn bangumi_auth_session() -> Result<AuthSession, String> {
     log_info("invoke bangumi_auth_session");
-    auth::load_token().map(auth::session_from_token)
+    let token = auth::load_token()?;
+    Ok(auth::session_from_token(token.as_deref()))
 }
 
 #[tauri::command]
@@ -429,25 +796,24 @@ fn bangumi_logout() -> Result<AuthSession, String> {
 }
 
 #[tauri::command]
-async fn bangumi_get_me() -> Result<BangumiUser, String> {
-    let token = auth::load_token()?
-        .ok_or_else(|| "No Bangumi token stored. Login first.".to_string())?;
-    let client = BangumiClient::new(Some(token.access_token))?;
-
-    client.me().await
+async fn bangumi_get_me(state: tauri::State<'_, ApiState>) -> Result<BangumiUser, String> {
+    let token =
+        auth::load_token()?.ok_or_else(|| "No Bangumi token stored. Login first.".to_string())?;
+    state.client.me(&token.access_token).await
 }
 
 #[tauri::command]
 async fn bangumi_api_get(
+    state: tauri::State<'_, ApiState>,
     path: String,
     query: Option<BTreeMap<String, String>>,
 ) -> Result<Value, String> {
     log_info(&format!("invoke bangumi_api_get path={path}"));
     let token = auth::load_token()?;
-    let access_token = token.map(|token| token.access_token);
-    let client = BangumiClient::new(access_token.clone())?;
-    let first_attempt = client
-        .request_json(Method::GET, &path, query.clone(), None)
+    let access_token = token.as_deref().map(|token| token.access_token.as_str());
+    let first_attempt = state
+        .client
+        .request_json(Method::GET, &path, query.clone(), None, access_token)
         .await;
 
     match first_attempt {
@@ -456,12 +822,21 @@ async fn bangumi_api_get(
             Ok(value)
         }
         Err(error) if auth::is_auth_error(&error) => {
-            log_error(&format!("bangumi_api_get auth failure path={path}: {error}"));
-            auth::refresh_saved_oauth_session_if_current(access_token.as_deref()).await?;
+            log_error(&format!(
+                "bangumi_api_get auth failure path={path}: {error}"
+            ));
+            auth::refresh_saved_oauth_session_if_current(&state.client, access_token).await?;
             let refreshed = auth::load_token()?;
-            let refreshed_client = BangumiClient::new(refreshed.map(|token| token.access_token))?;
-            log_info(&format!("retrying bangumi_api_get after refresh path={path}"));
-            refreshed_client.request_json(Method::GET, &path, query, None).await
+            let refreshed_access_token = refreshed
+                .as_deref()
+                .map(|token| token.access_token.as_str());
+            log_info(&format!(
+                "retrying bangumi_api_get after refresh path={path}"
+            ));
+            state
+                .client
+                .request_json(Method::GET, &path, query, None, refreshed_access_token)
+                .await
         }
         Err(error) => {
             log_error(&format!("bangumi_api_get failed path={path}: {error}"));
@@ -472,6 +847,7 @@ async fn bangumi_api_get(
 
 #[tauri::command]
 async fn bangumi_api_request(
+    state: tauri::State<'_, ApiState>,
     method: String,
     path: String,
     query: Option<BTreeMap<String, String>>,
@@ -479,13 +855,23 @@ async fn bangumi_api_request(
 ) -> Result<Value, String> {
     let method = Method::from_bytes(method.as_bytes())
         .map_err(|error| format!("Invalid HTTP method: {error}"))?;
-    log_info(&format!("invoke bangumi_api_request method={} path={}", method.as_str(), path));
+    log_info(&format!(
+        "invoke bangumi_api_request method={} path={}",
+        method.as_str(),
+        path
+    ));
 
     let token = auth::load_token()?;
-    let access_token = token.map(|token| token.access_token);
-    let client = BangumiClient::new(access_token.clone())?;
-    let first_attempt = client
-        .request_json(method.clone(), &path, query.clone(), body.clone())
+    let access_token = token.as_deref().map(|token| token.access_token.as_str());
+    let first_attempt = state
+        .client
+        .request_json(
+            method.clone(),
+            &path,
+            query.clone(),
+            body.clone(),
+            access_token,
+        )
         .await;
 
     match first_attempt {
@@ -504,16 +890,19 @@ async fn bangumi_api_request(
                 path,
                 error
             ));
-            auth::refresh_saved_oauth_session_if_current(access_token.as_deref()).await?;
+            auth::refresh_saved_oauth_session_if_current(&state.client, access_token).await?;
             let refreshed = auth::load_token()?;
-            let refreshed_client = BangumiClient::new(refreshed.map(|token| token.access_token))?;
+            let refreshed_access_token = refreshed
+                .as_deref()
+                .map(|token| token.access_token.as_str());
             log_info(&format!(
                 "retrying bangumi_api_request after refresh method={} path={}",
                 method.as_str(),
                 path
             ));
-            refreshed_client
-                .request_json(method, &path, query, body)
+            state
+                .client
+                .request_json(method, &path, query, body, refreshed_access_token)
                 .await
         }
         Err(error) => {
@@ -643,6 +1032,499 @@ async fn bangumi_fetch_mono_comments_page(
 }
 
 #[tauri::command]
+async fn bangumi_set_mono_collected(
+    mono_type: String,
+    mono_id: u64,
+    collected: bool,
+) -> Result<(), String> {
+    if mono_id == 0 {
+        return Err("Invalid mono ID.".to_string());
+    }
+    let normalized_type = match mono_type.trim().to_ascii_lowercase().as_str() {
+        "character" => "character",
+        "person" => "person",
+        _ => return Err("Unsupported mono type. Expected 'character' or 'person'.".to_string()),
+    };
+    let cookie = auth::load_web_cookie()?.ok_or_else(|| {
+        "No saved Bangumi web cookie. Log in on the web settings page first.".to_string()
+    })?;
+    let detail_url = Url::parse(&format!("https://bangumi.tv/{normalized_type}/{mono_id}"))
+        .map_err(|error| format!("Failed to build mono detail URL: {error}"))?;
+    let client = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("Failed to build mono collection HTTP client: {error}"))?;
+
+    let detail_response = fetch_with_cookie_redirect(&client, detail_url.as_str(), &cookie).await?;
+    let detail_status = detail_response.status();
+    let detail_body = detail_response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read mono detail page: {error}"))?;
+    if !detail_status.is_success() {
+        return Err(format!(
+            "Mono detail page returned {detail_status}: {detail_body}"
+        ));
+    }
+    if page_shows_web_verification(&detail_body) {
+        return Err("Bangumi web verification blocked the collection request.".to_string());
+    }
+    if page_shows_auth_buttons(&detail_body) {
+        return Err(
+            "The saved Bangumi web cookie has expired. Log in on the web settings page again."
+                .to_string(),
+        );
+    }
+
+    let Some(action_path) =
+        find_mono_collection_action(&detail_body, normalized_type, mono_id, collected)
+    else {
+        // This command currently backs the API's broken DELETE routes. If an
+        // authenticated detail page no longer exposes erase_collect, the
+        // requested uncollected state has already been reached.
+        if !collected {
+            return Ok(());
+        }
+        return Err(
+            "Bangumi did not expose a collection action on the mono detail page.".to_string(),
+        );
+    };
+
+    let action_url = detail_url
+        .join(&action_path)
+        .map_err(|error| format!("Invalid mono collection action URL: {error}"))?;
+    let action_host = action_url
+        .host_str()
+        .ok_or_else(|| "Mono collection action URL has no host.".to_string())?;
+    if !allowed_bangumi_host(action_host) {
+        return Err("Bangumi returned an unsafe collection action URL.".to_string());
+    }
+
+    let action_response = fetch_with_cookie_redirect(&client, action_url.as_str(), &cookie).await?;
+    let action_status = action_response.status();
+    let action_body = action_response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read mono collection response: {error}"))?;
+    if !action_status.is_success() {
+        return Err(format!(
+            "Mono collection action returned {action_status}: {action_body}"
+        ));
+    }
+    if page_shows_web_verification(&action_body) {
+        return Err("Bangumi web verification blocked the collection action.".to_string());
+    }
+    if page_shows_auth_buttons(&action_body) {
+        return Err(
+            "The saved Bangumi web cookie has expired. Log in on the web settings page again."
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn bangumi_set_index_collected(index_id: u64, collected: bool) -> Result<(), String> {
+    if index_id == 0 {
+        return Err("Invalid index ID.".to_string());
+    }
+    let cookie = auth::load_web_cookie()?.ok_or_else(|| {
+        "No saved Bangumi web cookie. Log in on the web settings page first.".to_string()
+    })?;
+    let detail_url = Url::parse(&format!("https://bangumi.tv/index/{index_id}"))
+        .map_err(|error| format!("Failed to build index detail URL: {error}"))?;
+    let client = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("Failed to build index collection HTTP client: {error}"))?;
+
+    let detail_response = fetch_with_cookie_redirect(&client, detail_url.as_str(), &cookie).await?;
+    let detail_status = detail_response.status();
+    let detail_body = detail_response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read index detail page: {error}"))?;
+    if !detail_status.is_success() {
+        return Err(format!(
+            "Index detail page returned {detail_status}: {detail_body}"
+        ));
+    }
+    if page_shows_web_verification(&detail_body) {
+        return Err("Bangumi web verification blocked the index collection request.".to_string());
+    }
+    if page_shows_auth_buttons(&detail_body) {
+        return Err(
+            "The saved Bangumi web cookie has expired. Log in on the web settings page again."
+                .to_string(),
+        );
+    }
+
+    let Some(action_path) = find_index_collection_action(&detail_body, index_id, collected) else {
+        if !collected {
+            return Ok(());
+        }
+        return Err(
+            "Bangumi did not expose an index collection action on the detail page.".to_string(),
+        );
+    };
+    let action_url = detail_url
+        .join(&action_path)
+        .map_err(|error| format!("Invalid index collection action URL: {error}"))?;
+    let action_host = action_url
+        .host_str()
+        .ok_or_else(|| "Index collection action URL has no host.".to_string())?;
+    if !allowed_bangumi_host(action_host) {
+        return Err("Bangumi returned an unsafe index collection action URL.".to_string());
+    }
+
+    let action_response = fetch_with_cookie_redirect(&client, action_url.as_str(), &cookie).await?;
+    let action_status = action_response.status();
+    let action_body = action_response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read index collection response: {error}"))?;
+    if !action_status.is_success() {
+        return Err(format!(
+            "Index collection action returned {action_status}: {action_body}"
+        ));
+    }
+    if page_shows_web_verification(&action_body) {
+        return Err("Bangumi web verification blocked the index collection action.".to_string());
+    }
+    if page_shows_auth_buttons(&action_body) {
+        return Err(
+            "The saved Bangumi web cookie has expired. Log in on the web settings page again."
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn bangumi_add_index_entity(
+    index_id: u64,
+    entity_type: String,
+    entity_id: u64,
+) -> Result<(), String> {
+    if index_id == 0 || entity_id == 0 {
+        return Err("Invalid directory item ID.".to_string());
+    }
+    let (category, submit_label) = match entity_type.trim().to_ascii_lowercase().as_str() {
+        "character" => ("1", "添加角色关联"),
+        "person" => ("2", "添加人物关联"),
+        _ => return Err("Unsupported directory item type.".to_string()),
+    };
+    let cookie = auth::load_web_cookie()?.ok_or_else(|| {
+        "No saved Bangumi web cookie. Log in on the web settings page first.".to_string()
+    })?;
+    let index_url = Url::parse(&format!("https://bangumi.tv/index/{index_id}"))
+        .map_err(|error| format!("Failed to build directory URL: {error}"))?;
+    let client = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("Failed to build index entity HTTP client: {error}"))?;
+
+    let index_response = fetch_with_cookie_redirect(&client, index_url.as_str(), &cookie).await?;
+    let index_status = index_response.status();
+    let index_body = index_response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read directory page: {error}"))?;
+    if !index_status.is_success() {
+        return Err(format!(
+            "Directory page returned {index_status}: {index_body}"
+        ));
+    }
+    if page_shows_web_verification(&index_body) {
+        return Err("Bangumi web verification blocked the directory request.".to_string());
+    }
+    if page_shows_auth_buttons(&index_body) {
+        return Err(
+            "The saved Bangumi web cookie has expired. Log in on the web settings page again."
+                .to_string(),
+        );
+    }
+
+    let (action_path, formhash) = find_index_related_form(&index_body, index_id, category)
+        .ok_or_else(|| "该 Bangumi 目录不可编辑，或没有提供添加关联表单。".to_string())?;
+    let action_url = index_url
+        .join(&action_path)
+        .map_err(|error| format!("Invalid add-to-directory URL: {error}"))?;
+    let action_host = action_url
+        .host_str()
+        .ok_or_else(|| "Directory action URL has no host.".to_string())?;
+    if !allowed_bangumi_host(action_host) {
+        return Err("Bangumi returned an unsafe directory action URL.".to_string());
+    }
+
+    let response = client
+        .post(action_url.as_str())
+        .header(reqwest::header::COOKIE, &cookie)
+        .form(&[
+            ("formhash", formhash.as_str()),
+            ("cat", category),
+            ("add_related", &entity_id.to_string()),
+            ("submit", submit_label),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("Failed to add directory relation: {error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read directory item response: {error}"))?;
+    if !status.is_success() && !status.is_redirection() {
+        return Err(format!("Directory item action returned {status}: {body}"));
+    }
+    if page_shows_web_verification(&body) {
+        return Err("Bangumi web verification blocked the directory action.".to_string());
+    }
+    if page_shows_auth_buttons(&body) {
+        return Err(
+            "The saved Bangumi web cookie has expired. Log in on the web settings page again."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn bangumi_fetch_user_indices_page(
+    username: String,
+    collected: bool,
+    page: Option<u32>,
+) -> Result<String, String> {
+    let normalized_username = username.trim();
+    if normalized_username.is_empty() || normalized_username.len() > 64 {
+        return Err("Invalid Bangumi username.".to_string());
+    }
+
+    let mut url = Url::parse("https://bangumi.tv/")
+        .map_err(|error| format!("Failed to build user indices URL: {error}"))?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| "Failed to build user indices path.".to_string())?;
+        segments
+            .push("user")
+            .push(normalized_username)
+            .push("index");
+        if collected {
+            segments.push("collect");
+        }
+    }
+    if let Some(page) = page {
+        if page > 1 {
+            url.query_pairs_mut().append_pair("page", &page.to_string());
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .build()
+        .map_err(|error| format!("Failed to build user indices HTTP client: {error}"))?;
+    let mut request = client.get(url);
+    match auth::load_web_cookie() {
+        Ok(Some(cookie)) => request = request.header(reqwest::header::COOKIE, cookie),
+        Ok(None) => {}
+        Err(error) => return Err(format!("Failed to load saved web cookie: {error}")),
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Failed to fetch user indices page: {error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read user indices page: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("User indices page returned {status}: {body}"));
+    }
+    if body.contains("cf-chl-") || body.contains("Enable JavaScript and cookies") {
+        return Err("Bangumi web verification blocked the directory list request.".to_string());
+    }
+    Ok(body)
+}
+
+#[tauri::command]
+async fn bangumi_fetch_index_page(index_id: u64) -> Result<String, String> {
+    if index_id == 0 {
+        return Err("Invalid index ID.".to_string());
+    }
+    let cookie = auth::load_web_cookie()?.ok_or_else(|| {
+        "No saved Bangumi web cookie. Log in on the web settings page first.".to_string()
+    })?;
+    let url = Url::parse(&format!("https://bangumi.tv/index/{index_id}"))
+        .map_err(|error| format!("Failed to build directory URL: {error}"))?;
+    let client = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("Failed to build directory HTTP client: {error}"))?;
+    let response = fetch_with_cookie_redirect(&client, url.as_str(), &cookie).await?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read directory page: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("Directory page returned {status}: {body}"));
+    }
+    if page_shows_web_verification(&body) {
+        return Err("Bangumi web verification blocked the directory request.".to_string());
+    }
+    if page_shows_auth_buttons(&body) {
+        return Err(
+            "The saved Bangumi web cookie has expired. Log in on the web settings page again."
+                .to_string(),
+        );
+    }
+    Ok(body)
+}
+
+#[tauri::command]
+async fn bangumi_fetch_subject_page(subject_id: u64) -> Result<String, String> {
+    if subject_id == 0 {
+        return Err("Invalid subject ID.".to_string());
+    }
+    let cookie = auth::load_web_cookie()?.ok_or_else(|| {
+        "No saved Bangumi web cookie. Log in on the web settings page first.".to_string()
+    })?;
+    let url = Url::parse(&format!("https://bangumi.tv/subject/{subject_id}"))
+        .map_err(|error| format!("Failed to build subject URL: {error}"))?;
+    let client = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("Failed to build subject HTTP client: {error}"))?;
+    let response = fetch_with_cookie_redirect(&client, url.as_str(), &cookie).await?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read subject page: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("Subject page returned {status}: {body}"));
+    }
+    if page_shows_web_verification(&body) {
+        return Err("Bangumi web verification blocked the subject request.".to_string());
+    }
+    if page_shows_auth_buttons(&body) {
+        return Err(
+            "The saved Bangumi web cookie has expired. Log in on the web settings page again."
+                .to_string(),
+        );
+    }
+    Ok(body)
+}
+
+#[tauri::command]
+async fn bangumi_fetch_anime_browser_page(sort: String, page: u32) -> Result<String, String> {
+    if !matches!(sort.as_str(), "trends" | "rank") {
+        return Err("Invalid anime browser sort mode.".to_string());
+    }
+    if !(1..=3).contains(&page) {
+        return Err("Invalid anime browser page.".to_string());
+    }
+    let mut url = Url::parse("https://bangumi.tv/anime/browser/")
+        .map_err(|error| format!("Failed to build anime browser URL: {error}"))?;
+    url.query_pairs_mut()
+        .append_pair("sort", &sort)
+        .append_pair("page", &page.to_string());
+    let client = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .build()
+        .map_err(|error| format!("Failed to build anime browser HTTP client: {error}"))?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to fetch anime browser page: {error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read anime browser page: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("Anime browser page returned {status}."));
+    }
+    if page_shows_web_verification(&body) {
+        return Err("Bangumi web verification blocked the anime browser request.".to_string());
+    }
+    Ok(body)
+}
+#[tauri::command]
+async fn bangumi_fetch_user_mono_collections_page(
+    username: String,
+    mono_type: String,
+    page: Option<u32>,
+) -> Result<String, String> {
+    let normalized_username = username.trim();
+    if normalized_username.is_empty() || normalized_username.len() > 64 {
+        return Err("Invalid Bangumi username.".to_string());
+    }
+    let normalized_type = match mono_type.as_str() {
+        "character" => "character",
+        "person" => "person",
+        _ => return Err("Invalid mono collection type.".to_string()),
+    };
+
+    let mut url = Url::parse("https://bangumi.tv/")
+        .map_err(|error| format!("Failed to build mono collections URL: {error}"))?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| "Failed to build mono collections path.".to_string())?;
+        segments
+            .push("user")
+            .push(normalized_username)
+            .push("mono")
+            .push(normalized_type);
+    }
+    if let Some(page) = page {
+        if page > 1 {
+            url.query_pairs_mut().append_pair("page", &page.to_string());
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent(bangumi::USER_AGENT)
+        .build()
+        .map_err(|error| format!("Failed to build mono collections HTTP client: {error}"))?;
+    let mut request = client.get(url);
+    match auth::load_web_cookie() {
+        Ok(Some(cookie)) => request = request.header(reqwest::header::COOKIE, cookie),
+        Ok(None) => {}
+        Err(error) => return Err(format!("Failed to load saved web cookie: {error}")),
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Failed to fetch mono collections page: {error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read mono collections page: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("Mono collections page returned {status}: {body}"));
+    }
+    if body.contains("cf-chl-") || body.contains("Enable JavaScript and cookies") {
+        return Err("Bangumi web verification blocked the mono collections request.".to_string());
+    }
+    Ok(body)
+}
+
+#[tauri::command]
 async fn bangumi_open_embedded_web_login(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(WEB_LOGIN_WINDOW_LABEL) {
         existing
@@ -683,7 +1565,9 @@ async fn bangumi_capture_embedded_web_cookie(
 ) -> Result<WebCookieStatus, String> {
     let webview_window = app
         .get_webview_window(WEB_LOGIN_WINDOW_LABEL)
-        .ok_or_else(|| "未找到网页登录窗口，请先点击“应用内登录并自动获取”并保持其开启。".to_string())?;
+        .ok_or_else(|| {
+            "未找到网页登录窗口，请先点击“应用内登录并自动获取”并保持其开启。".to_string()
+        })?;
 
     let header = capture_cookie_header_from_window(webview_window.clone())
         .await
@@ -827,7 +1711,10 @@ async fn import_live2d_model(
     if name.is_empty() {
         return Err("模型名称不能为空。".to_string());
     }
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == ' ') {
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == ' ')
+    {
         return Err("模型名称只能包含字母、数字、空格、下划线和连字符。".to_string());
     }
 
@@ -840,16 +1727,24 @@ async fn import_live2d_model(
     let mut model_file_name: Option<String> = None;
     for entry in std::fs::read_dir(source).map_err(|e| format!("无法读取文件夹: {e}"))? {
         let entry = entry.map_err(|e| format!("读取条目失败: {e}"))?;
-        let n = entry.file_name().to_str().unwrap_or("").to_ascii_lowercase();
+        let n = entry
+            .file_name()
+            .to_str()
+            .unwrap_or("")
+            .to_ascii_lowercase();
         if n.ends_with(".model.json") || n.ends_with(".model3.json") {
             model_file_name = Some(entry.file_name().to_str().unwrap_or("").to_string());
             break;
         }
     }
-    let model_file_name = model_file_name
-        .ok_or_else(|| "未找到 Live2D 模型入口文件（*.model.json / *.model3.json）。".to_string())?;
+    let model_file_name = model_file_name.ok_or_else(|| {
+        "未找到 Live2D 模型入口文件（*.model.json / *.model3.json）。".to_string()
+    })?;
 
-    let app_data_dir = app.path().app_data_dir().map_err(|e| format!("无法获取数据目录: {e}"))?;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取数据目录: {e}"))?;
     let dest_root = app_data_dir.join("live2d").join(&name);
 
     // 重名检查
@@ -871,8 +1766,10 @@ async fn import_live2d_model(
         let _ = std::fs::remove_dir_all(&temp_root);
         return Err(format!("模型“{name}”已存在，请使用不同的名称。"));
     }
-    std::fs::rename(&temp_root, &dest_root)
-        .map_err(|e| { let _ = std::fs::remove_dir_all(&temp_root); format!("导入模型失败: {e}") })?;
+    std::fs::rename(&temp_root, &dest_root).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&temp_root);
+        format!("导入模型失败: {e}")
+    })?;
 
     let dest_model_path = dest_root.join(&model_file_name);
     if !dest_model_path.exists() {
@@ -881,13 +1778,19 @@ async fn import_live2d_model(
     }
     let path = dest_model_path.to_str().ok_or("路径非 UTF-8")?.to_string();
     log_info(&format!("Model imported: {name} -> {path}"));
-    Ok(Live2dModelInfo { name: name.to_string(), path })
+    Ok(Live2dModelInfo {
+        name: name.to_string(),
+        path,
+    })
 }
 
 /// 列出已导入的所有模型
 #[tauri::command]
 fn list_live2d_models(app: tauri::AppHandle) -> Result<Vec<Live2dModelInfo>, String> {
-    let app_data_dir = app.path().app_data_dir().map_err(|e| format!("无法获取数据目录: {e}"))?;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取数据目录: {e}"))?;
     let live2d_dir = app_data_dir.join("live2d");
     if !live2d_dir.exists() {
         return Ok(vec![]);
@@ -896,17 +1799,24 @@ fn list_live2d_models(app: tauri::AppHandle) -> Result<Vec<Live2dModelInfo>, Str
     let mut models = vec![];
     for entry in std::fs::read_dir(&live2d_dir).map_err(|e| format!("无法读取目录: {e}"))? {
         let entry = entry.map_err(|e| format!("读取条目失败: {e}"))?;
-        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { continue; }
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
         let dir_name = entry.file_name().to_str().unwrap_or("").to_string();
         // 跳过 cubism core 文件
-        if dir_name == CUBISM_CORE_FILENAME || dir_name.starts_with('.') { continue; }
+        if dir_name == CUBISM_CORE_FILENAME || dir_name.starts_with('.') {
+            continue;
+        }
         // 在目录中找 model json
         if let Ok(sub_entries) = std::fs::read_dir(entry.path()) {
             for sub in sub_entries.flatten() {
                 let n = sub.file_name().to_str().unwrap_or("").to_ascii_lowercase();
                 if n.ends_with(".model.json") || n.ends_with(".model3.json") {
                     let path = sub.path().to_str().unwrap_or("").to_string();
-                    models.push(Live2dModelInfo { name: dir_name.clone(), path });
+                    models.push(Live2dModelInfo {
+                        name: dir_name.clone(),
+                        path,
+                    });
                     break;
                 }
             }
@@ -919,8 +1829,13 @@ fn list_live2d_models(app: tauri::AppHandle) -> Result<Vec<Live2dModelInfo>, Str
 #[tauri::command]
 fn remove_live2d_model(app: tauri::AppHandle, model_name: String) -> Result<(), String> {
     let name = model_name.trim();
-    if name.is_empty() { return Err("模型名称不能为空。".to_string()); }
-    let app_data_dir = app.path().app_data_dir().map_err(|e| format!("无法获取数据目录: {e}"))?;
+    if name.is_empty() {
+        return Err("模型名称不能为空。".to_string());
+    }
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取数据目录: {e}"))?;
     let model_dir = app_data_dir.join("live2d").join(name);
     if model_dir.exists() {
         std::fs::remove_dir_all(&model_dir).map_err(|e| format!("删除失败: {e}"))?;
@@ -936,22 +1851,23 @@ const CUBISM_CORE_FILENAME: &str = "live2dcubismcore.min.js";
 /// 从 Live2D 官方源下载 Cubism 4 Core 运行时到应用数据目录。
 /// 如果文件已存在则跳过下载，返回已有路径。
 #[tauri::command]
-async fn download_live2d_cubism_core(
-    app: tauri::AppHandle,
-) -> Result<String, String> {
+async fn download_live2d_cubism_core(app: tauri::AppHandle) -> Result<String, String> {
     let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|error| format!("无法获取应用数据目录: {error}"))?;
 
     let dest_dir = app_data_dir.join("live2d");
-    std::fs::create_dir_all(&dest_dir)
-        .map_err(|error| format!("无法创建目录: {error}"))?;
+    std::fs::create_dir_all(&dest_dir).map_err(|error| format!("无法创建目录: {error}"))?;
 
     let dest_path = dest_dir.join(CUBISM_CORE_FILENAME);
 
     // 已存在则跳过
-    if dest_path.exists() && std::fs::metadata(&dest_path).map(|m| m.len() > 0).unwrap_or(false) {
+    if dest_path.exists()
+        && std::fs::metadata(&dest_path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         log_info("Cubism 4 Core already exists, skipping download.");
         return Ok(dest_path
             .to_str()
@@ -983,8 +1899,7 @@ async fn download_live2d_cubism_core(
         .map_err(|error| format!("读取响应失败: {error}"))?;
 
     let temp_path = dest_path.with_extension("js.tmp");
-    std::fs::write(&temp_path, &bytes)
-        .map_err(|error| format!("写入文件失败: {error}"))?;
+    std::fs::write(&temp_path, &bytes).map_err(|error| format!("写入文件失败: {error}"))?;
     if dest_path.exists() {
         let _ = std::fs::remove_file(&dest_path);
     }
@@ -1012,8 +1927,7 @@ fn remove_live2d_cubism_core(app: tauri::AppHandle) -> Result<(), String> {
     let file_path = app_data_dir.join("live2d").join(CUBISM_CORE_FILENAME);
 
     if file_path.exists() {
-        std::fs::remove_file(&file_path)
-            .map_err(|error| format!("删除文件失败: {error}"))?;
+        std::fs::remove_file(&file_path).map_err(|error| format!("删除文件失败: {error}"))?;
         log_info("Cubism 4 Core removed.");
     }
 
@@ -1037,15 +1951,16 @@ fn get_live2d_dialog_file_path(app: tauri::AppHandle) -> Result<String, String> 
         .app_data_dir()
         .map_err(|e| format!("无法获取应用数据目录: {e}"))?;
     let live2d_dir = app_data_dir.join("live2d");
-    std::fs::create_dir_all(&live2d_dir)
-        .map_err(|e| format!("无法创建目录: {e}"))?;
+    std::fs::create_dir_all(&live2d_dir).map_err(|e| format!("无法创建目录: {e}"))?;
 
     let file_path = live2d_dir.join(DIALOG_FILENAME);
     if !file_path.exists() {
         let content = DEFAULT_DIALOG_MESSAGES.join("\n");
-        std::fs::write(&file_path, &content)
-            .map_err(|e| format!("无法创建对话文件: {e}"))?;
-        log_info(&format!("Created default dialog file: {}", file_path.display()));
+        std::fs::write(&file_path, &content).map_err(|e| format!("无法创建对话文件: {e}"))?;
+        log_info(&format!(
+            "Created default dialog file: {}",
+            file_path.display()
+        ));
     }
 
     file_path
@@ -1066,11 +1981,14 @@ fn read_live2d_dialog_file(app: tauri::AppHandle) -> Result<Vec<String>, String>
     if !file_path.exists() {
         // 触发创建默认文件
         get_live2d_dialog_file_path(app)?;
-        return Ok(DEFAULT_DIALOG_MESSAGES.iter().map(|s| s.to_string()).collect());
+        return Ok(DEFAULT_DIALOG_MESSAGES
+            .iter()
+            .map(|s| s.to_string())
+            .collect());
     }
 
-    let content = std::fs::read_to_string(&file_path)
-        .map_err(|e| format!("无法读取对话文件: {e}"))?;
+    let content =
+        std::fs::read_to_string(&file_path).map_err(|e| format!("无法读取对话文件: {e}"))?;
 
     let lines: Vec<String> = content
         .lines()
@@ -1079,7 +1997,10 @@ fn read_live2d_dialog_file(app: tauri::AppHandle) -> Result<Vec<String>, String>
         .collect();
 
     if lines.is_empty() {
-        return Ok(DEFAULT_DIALOG_MESSAGES.iter().map(|s| s.to_string()).collect());
+        return Ok(DEFAULT_DIALOG_MESSAGES
+            .iter()
+            .map(|s| s.to_string())
+            .collect());
     }
 
     Ok(lines)
@@ -1093,11 +2014,9 @@ async fn open_live2d_dialog_folder(app: tauri::AppHandle) -> Result<(), String> 
         .app_data_dir()
         .map_err(|e| format!("无法获取应用数据目录: {e}"))?;
     let live2d_dir = app_data_dir.join("live2d");
-    std::fs::create_dir_all(&live2d_dir)
-        .map_err(|e| format!("无法创建目录: {e}"))?;
+    std::fs::create_dir_all(&live2d_dir).map_err(|e| format!("无法创建目录: {e}"))?;
 
-    tauri_plugin_opener::reveal_item_in_dir(&live2d_dir)
-        .map_err(|e| format!("无法打开文件夹: {e}"))
+    tauri_plugin_opener::reveal_item_in_dir(&live2d_dir).map_err(|e| format!("无法打开文件夹: {e}"))
 }
 
 // ── NSFW 对话文件 ──────────────────────────────────────
@@ -1137,14 +2056,12 @@ fn ensure_nsfw_dialog_file(
         .app_data_dir()
         .map_err(|e| format!("无法获取应用数据目录: {e}"))?;
     let live2d_dir = app_data_dir.join("live2d");
-    std::fs::create_dir_all(&live2d_dir)
-        .map_err(|e| format!("无法创建目录: {e}"))?;
+    std::fs::create_dir_all(&live2d_dir).map_err(|e| format!("无法创建目录: {e}"))?;
 
     let file_path = live2d_dir.join(filename);
     if !file_path.exists() {
         let content = default_messages.join("\n");
-        std::fs::write(&file_path, &content)
-            .map_err(|e| format!("无法创建对话文件: {e}"))?;
+        std::fs::write(&file_path, &content).map_err(|e| format!("无法创建对话文件: {e}"))?;
     }
 
     Ok(file_path)
@@ -1157,8 +2074,8 @@ fn read_nsfw_dialog_file_inner(
 ) -> Result<Vec<String>, String> {
     let file_path = ensure_nsfw_dialog_file(app, filename, default_messages)?;
 
-    let content = std::fs::read_to_string(&file_path)
-        .map_err(|e| format!("无法读取对话文件: {e}"))?;
+    let content =
+        std::fs::read_to_string(&file_path).map_err(|e| format!("无法读取对话文件: {e}"))?;
 
     let lines: Vec<String> = content
         .lines()
@@ -1283,15 +2200,9 @@ async fn check_github_update(app: tauri::AppHandle) -> Result<UpdateCheckResult,
         .trim_start_matches('v')
         .to_string();
 
-    let release_url = body["html_url"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let release_url = body["html_url"].as_str().unwrap_or("").to_string();
 
-    let release_notes = body["body"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let release_notes = body["body"].as_str().unwrap_or("").to_string();
 
     if latest_version.is_empty() {
         return Ok(UpdateCheckResult {
@@ -1320,10 +2231,14 @@ async fn check_github_update(app: tauri::AppHandle) -> Result<UpdateCheckResult,
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let api_state = ApiState::new().expect("failed to initialize Bangumi API client");
     tauri::Builder::default()
+        .manage(api_state)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            bangumi_fetch_image_data_url,
+            system_audio_output_status,
             greet,
             import_live2d_model,
             list_live2d_models,
@@ -1337,11 +2252,9 @@ pub fn run() {
             read_live2d_nsfw_browsing_file,
             read_live2d_nsfw_exit_file,
             bangumi_oauth_start_login,
-            bangumi_oauth_wait_login_result,
+            bangumi_oauth_finish_login,
             bangumi_login_with_pat,
-            bangumi_login_with_worker_token,
-            bangumi_worker_exchange_code,
-            bangumi_worker_refresh_token,
+            bangumi_refresh_oauth_session,
             bangumi_auth_session,
             bangumi_logout,
             bangumi_get_me,
@@ -1349,6 +2262,14 @@ pub fn run() {
             bangumi_api_request,
             bangumi_fetch_subject_comments_page,
             bangumi_fetch_mono_comments_page,
+            bangumi_set_mono_collected,
+            bangumi_set_index_collected,
+            bangumi_add_index_entity,
+            bangumi_fetch_user_indices_page,
+            bangumi_fetch_index_page,
+            bangumi_fetch_subject_page,
+            bangumi_fetch_anime_browser_page,
+            bangumi_fetch_user_mono_collections_page,
             bangumi_web_cookie_status,
             bangumi_save_web_cookie,
             bangumi_clear_web_cookie,
@@ -1359,6 +2280,8 @@ pub fn run() {
             bangumi_capture_embedded_web_cookie,
             diagnostics::export_diagnostics,
             mal_scraper::mal_scrape_anime,
+            save_image_to_path,
+            save_image_bytes_to_path,
             check_github_update
         ])
         .run(tauri::generate_context!())

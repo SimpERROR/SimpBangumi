@@ -1,10 +1,14 @@
 <script setup lang="ts">
 const emit = defineEmits<{
-  (event: "open-page", page: "display" | "web-login" | "broadcast" | "update" | "about" | "developer"): void;
+  (event: "open-page", page: "display" | "collection" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance"): void;
 }>();
 
 function openDisplaySettings() {
   emit("open-page", "display");
+}
+
+function openCollectionSettings() {
+  emit("open-page", "collection");
 }
 
 function openBroadcastSettings() {
@@ -45,10 +49,18 @@ function openDeveloperSettings() {
         <span class="settings-entry__chevron" aria-hidden="true">></span>
       </button>
 
+      <button class="item item--button settings-entry" type="button" @click="openCollectionSettings">
+        <div class="settings-entry__content">
+          <h3>收藏与进度</h3>
+          <p>管理收藏状态与逐集进度的联动行为。</p>
+        </div>
+        <span class="settings-entry__chevron" aria-hidden="true">></span>
+      </button>
+
       <button class="item item--button settings-entry" type="button" @click="openWebLoginSettings">
         <div class="settings-entry__content">
           <h3>网页登录与 Cookie</h3>
-          <p>配置网页抓取所需登录态，降低风控影响。</p>
+          <p>登录后启用目录等网页扩展功能。</p>
         </div>
         <span class="settings-entry__chevron" aria-hidden="true">></span>
       </button>

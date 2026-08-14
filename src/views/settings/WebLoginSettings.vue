@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useBangumi } from "../../composables/useBangumi";
 import { formatReadableDateTime } from "../../utils/datetime";
@@ -202,74 +202,38 @@ onMounted(() => {
   void refreshCookieStatus();
 });
 </script>
-
 <template>
   <div class="display-settings">
-
-    <!-- ═══ 登录与获取 ═══ -->
     <section class="settings-card">
       <h3 class="settings-card__title">网页登录与 Cookie</h3>
-      <p class="settings-card__desc">当网页抓取触发风控时，可先网页登录 Bangumi，再保存 Cookie 以用于抓取请求。</p>
-
+      <p class="settings-card__desc">可选配置，用于目录详情、角色与人物操作，以及部分网页扩展功能。OAuth 登录和常用 API 功能无需 Cookie。</p>
       <div class="settings-card__subsection">
-        <h4 class="settings-card__subtitle">应用内登录</h4>
-        <p class="settings-card__hint">在应用内窗口完成登录后，保持窗口开启并点击自动获取。</p>
+        <h4 class="settings-card__subtitle">推荐：应用内登录</h4>
+        <p class="settings-card__hint">点击「应用内登录」完成 Bangumi 网页登录，再点击「自动获取」即可。</p>
         <div class="settings-card__actions">
-          <button class="primary-button" type="button" :disabled="openingEmbedded || capturingEmbedded" @click="openEmbeddedLogin">
-            {{ openingEmbedded ? "打开中..." : "应用内登录" }}
-          </button>
-          <button class="secondary-button" type="button" :disabled="openingEmbedded || capturingEmbedded" @click="captureEmbeddedCookie">
-            {{ capturingEmbedded ? "读取中..." : "自动获取" }}
-          </button>
+          <button class="primary-button" type="button" :disabled="openingEmbedded || capturingEmbedded" @click="openEmbeddedLogin">{{ openingEmbedded ? "打开中..." : "应用内登录" }}</button>
+          <button class="secondary-button" type="button" :disabled="openingEmbedded || capturingEmbedded" @click="captureEmbeddedCookie">{{ capturingEmbedded ? "读取中..." : "自动获取" }}</button>
         </div>
       </div>
-
-      <div class="settings-card__subsection">
-        <h4 class="settings-card__subtitle">浏览器登录</h4>
-        <p class="settings-card__hint">如果应用内窗口无法使用，可改为浏览器登录后手动粘贴 Cookie。</p>
-        <button class="secondary-button" type="button" style="justify-self: start;" @click="openBangumiLoginPage">打开浏览器登录页</button>
-      </div>
-    </section>
-
-    <!-- ═══ Cookie 管理 ═══ -->
-    <section class="settings-card">
-      <h3 class="settings-card__title">Cookie 管理</h3>
-
       <p v-if="loading" class="settings-card__hint">正在读取 Cookie 状态...</p>
-      <template v-else>
-        <p class="settings-card__hint">
-          当前状态：<strong>{{ cookieConfigured ? "已配置" : "未配置" }}</strong>
-          <template v-if="cookieUpdatedAt"> · 最近保存：{{ formatReadableDateTime(cookieUpdatedAt) }}</template>
-        </p>
-      </template>
-
-      <textarea
-        v-model="cookieInput"
-        class="web-login-textarea"
-        rows="4"
-        :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded"
-        placeholder="例如：chii_auth=...; chii_sid=..."
-      ></textarea>
-
+      <p v-else class="settings-card__hint">当前状态：<strong>{{ cookieConfigured ? "已配置" : "未配置" }}</strong>。未配置时，使用相关功能会再提示。<template v-if="cookieUpdatedAt"> · 最近保存：{{ formatReadableDateTime(cookieUpdatedAt) }}</template></p>
       <div class="settings-card__actions">
-        <button class="primary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="saveCookie">
-          {{ saving ? "保存中..." : "保存 Cookie" }}
-        </button>
-        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="clearCookie">
-          {{ clearing ? "清除中..." : "清除 Cookie" }}
-        </button>
-        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="refreshCookieStatus">刷新状态</button>
-        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="validateCookie">
-          {{ validating ? "验证中..." : "验证有效性" }}
-        </button>
+        <button class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="validateCookie">{{ validating ? "验证中..." : "验证有效性" }}</button>
+        <button v-if="cookieConfigured" class="secondary-button" type="button" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="clearCookie">{{ clearing ? "清除中..." : "清除 Cookie" }}</button>
       </div>
-
+      <details class="web-login-advanced">
+        <summary>无法使用应用内登录？手动保存 Cookie</summary>
+        <div class="settings-card__subsection">
+          <p class="settings-card__hint">在浏览器登录后复制 Cookie，粘贴到下方保存。仅在应用内登录无法使用时使用。</p>
+          <button class="secondary-button" type="button" style="justify-self: start;" @click="openBangumiLoginPage">打开浏览器登录页</button>
+          <textarea v-model="cookieInput" class="web-login-textarea" rows="3" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" placeholder="例如：chii_auth=...; chii_sid=..."></textarea>
+          <button class="primary-button" type="button" style="justify-self: start;" :disabled="saving || clearing || validating || openingEmbedded || capturingEmbedded" @click="saveCookie">{{ saving ? "保存中..." : "保存 Cookie" }}</button>
+        </div>
+      </details>
       <p v-if="error" class="settings-card__error">{{ error }}</p>
       <p v-if="success" class="settings-card__hint" style="color: var(--accent);">{{ success }}</p>
-
-      <p class="settings-card__hint">Cookie 将本地加密保存，应用不会回显或上传；抓取时仅在本地请求头中使用。</p>
+      <p class="settings-card__hint">Cookie 仅在本机加密保存，不会回显或发送给 OAuth Worker。</p>
     </section>
-
   </div>
 </template>
 
@@ -286,6 +250,17 @@ onMounted(() => {
   line-height: 1.5;
   resize: vertical;
   transition: border-color 0.2s ease;
+}
+
+.web-login-advanced {
+  display: grid;
+  gap: 10px;
+}
+
+.web-login-advanced summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .web-login-textarea:focus {

@@ -8,6 +8,11 @@ import { linkConfirmEnabled } from "../../composables/useLinkInterceptor";
 
 const appStore = useAppStore();
 
+const AUTO_SPEAK_MIN = 5;
+const AUTO_SPEAK_MAX = 300;
+const AUTO_SPEAK_MIN_CAP = 120;
+const AUTO_SPEAK_STEP = 5;
+
 interface MarkerMeta {
   key: string
   label: string
@@ -15,18 +20,20 @@ interface MarkerMeta {
   parent: ReturnType<typeof ref<boolean>>
   inComplete: ReturnType<typeof ref<boolean>>
   inCollections: ReturnType<typeof ref<boolean>>
+  inIndex: ReturnType<typeof ref<boolean>>
   setParent: (v: boolean) => void
   setInComplete: (v: boolean) => void
   setInCollections: (v: boolean) => void
+  setInIndex: (v: boolean) => void
 }
 
 const markerMetas = computed<MarkerMeta[]>(() => [
-  { key: "broadcast", label: "配信", colorVar: "var(--accent)",    parent: appStore.broadcastMarker.parent, inComplete: appStore.broadcastMarker.inComplete, inCollections: appStore.broadcastMarker.inCollections, setParent: appStore.broadcastMarker.setParent, setInComplete: appStore.broadcastMarker.setInComplete, setInCollections: appStore.broadcastMarker.setInCollections },
-  { key: "wish",      label: "想看", colorVar: "var(--wish)",      parent: appStore.wishMarker.parent,      inComplete: appStore.wishMarker.inComplete,      inCollections: appStore.wishMarker.inCollections,      setParent: appStore.wishMarker.setParent,      setInComplete: appStore.wishMarker.setInComplete,      setInCollections: appStore.wishMarker.setInCollections },
-  { key: "watching",  label: "在看", colorVar: "var(--watching)",  parent: appStore.watchingMarker.parent,  inComplete: appStore.watchingMarker.inComplete,  inCollections: appStore.watchingMarker.inCollections,  setParent: appStore.watchingMarker.setParent,  setInComplete: appStore.watchingMarker.setInComplete,  setInCollections: appStore.watchingMarker.setInCollections },
-  { key: "collected", label: "看过", colorVar: "var(--collected)", parent: appStore.collectedMarker.parent, inComplete: appStore.collectedMarker.inComplete, inCollections: appStore.collectedMarker.inCollections, setParent: appStore.collectedMarker.setParent, setInComplete: appStore.collectedMarker.setInComplete, setInCollections: appStore.collectedMarker.setInCollections },
-  { key: "onhold",    label: "搁置", colorVar: "var(--onhold)",    parent: appStore.onholdMarker.parent,    inComplete: appStore.onholdMarker.inComplete,    inCollections: appStore.onholdMarker.inCollections,    setParent: appStore.onholdMarker.setParent,    setInComplete: appStore.onholdMarker.setInComplete,    setInCollections: appStore.onholdMarker.setInCollections },
-  { key: "dropped",   label: "抛弃", colorVar: "var(--dropped)",   parent: appStore.droppedMarker.parent,   inComplete: appStore.droppedMarker.inComplete,   inCollections: appStore.droppedMarker.inCollections,   setParent: appStore.droppedMarker.setParent,   setInComplete: appStore.droppedMarker.setInComplete,   setInCollections: appStore.droppedMarker.setInCollections },
+  { key: "broadcast", label: "配信", colorVar: "var(--accent)",    parent: appStore.broadcastMarker.parent, inComplete: appStore.broadcastMarker.inComplete, inCollections: appStore.broadcastMarker.inCollections, inIndex: appStore.broadcastMarker.inIndex, setParent: appStore.broadcastMarker.setParent, setInComplete: appStore.broadcastMarker.setInComplete, setInCollections: appStore.broadcastMarker.setInCollections, setInIndex: appStore.broadcastMarker.setInIndex },
+  { key: "wish",      label: "想看", colorVar: "var(--wish)",      parent: appStore.wishMarker.parent,      inComplete: appStore.wishMarker.inComplete,      inCollections: appStore.wishMarker.inCollections,      inIndex: appStore.wishMarker.inIndex,      setParent: appStore.wishMarker.setParent,      setInComplete: appStore.wishMarker.setInComplete,      setInCollections: appStore.wishMarker.setInCollections,      setInIndex: appStore.wishMarker.setInIndex },
+  { key: "watching",  label: "在看", colorVar: "var(--watching)",  parent: appStore.watchingMarker.parent,  inComplete: appStore.watchingMarker.inComplete,  inCollections: appStore.watchingMarker.inCollections,  inIndex: appStore.watchingMarker.inIndex,  setParent: appStore.watchingMarker.setParent,  setInComplete: appStore.watchingMarker.setInComplete,  setInCollections: appStore.watchingMarker.setInCollections,  setInIndex: appStore.watchingMarker.setInIndex },
+  { key: "collected", label: "看过", colorVar: "var(--collected)", parent: appStore.collectedMarker.parent, inComplete: appStore.collectedMarker.inComplete, inCollections: appStore.collectedMarker.inCollections, inIndex: appStore.collectedMarker.inIndex, setParent: appStore.collectedMarker.setParent, setInComplete: appStore.collectedMarker.setInComplete, setInCollections: appStore.collectedMarker.setInCollections, setInIndex: appStore.collectedMarker.setInIndex },
+  { key: "onhold",    label: "搁置", colorVar: "var(--onhold)",    parent: appStore.onholdMarker.parent,    inComplete: appStore.onholdMarker.inComplete,    inCollections: appStore.onholdMarker.inCollections,    inIndex: appStore.onholdMarker.inIndex,    setParent: appStore.onholdMarker.setParent,    setInComplete: appStore.onholdMarker.setInComplete,    setInCollections: appStore.onholdMarker.setInCollections,    setInIndex: appStore.onholdMarker.setInIndex },
+  { key: "dropped",   label: "抛弃", colorVar: "var(--dropped)",   parent: appStore.droppedMarker.parent,   inComplete: appStore.droppedMarker.inComplete,   inCollections: appStore.droppedMarker.inCollections,   inIndex: appStore.droppedMarker.inIndex,   setParent: appStore.droppedMarker.setParent,   setInComplete: appStore.droppedMarker.setInComplete,   setInCollections: appStore.droppedMarker.setInCollections,   setInIndex: appStore.droppedMarker.setInIndex },
 ]);
 
 const importing = ref(false);
@@ -127,6 +134,41 @@ function handleResetPosition() {
 function handleRefreshDialog() {
   appStore.live2dRefreshDialogCounter.value++;
 }
+
+function clampAutoSpeakValue(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function handleAutoSpeakMinInput(event: Event) {
+  const raw = Number((event.target as HTMLInputElement).value);
+  const maxAllowed = Math.min(AUTO_SPEAK_MIN_CAP, appStore.live2dAutoSpeakMaxInterval.value);
+  const next = clampAutoSpeakValue(raw, AUTO_SPEAK_MIN, maxAllowed);
+  appStore.live2dAutoSpeakMinInterval.value = next;
+  if (appStore.live2dAutoSpeakMaxInterval.value < next) {
+    appStore.live2dAutoSpeakMaxInterval.value = next;
+  }
+}
+
+function handleAutoSpeakMaxInput(event: Event) {
+  const raw = Number((event.target as HTMLInputElement).value);
+  const next = clampAutoSpeakValue(raw, appStore.live2dAutoSpeakMinInterval.value, AUTO_SPEAK_MAX);
+  appStore.live2dAutoSpeakMaxInterval.value = next;
+  if (appStore.live2dAutoSpeakMinInterval.value > next) {
+    appStore.live2dAutoSpeakMinInterval.value = next;
+  }
+}
+
+const autoSpeakRangeStyle = computed(() => {
+  const minValue = clampAutoSpeakValue(appStore.live2dAutoSpeakMinInterval.value, AUTO_SPEAK_MIN, AUTO_SPEAK_MAX);
+  const maxValue = clampAutoSpeakValue(appStore.live2dAutoSpeakMaxInterval.value, AUTO_SPEAK_MIN, AUTO_SPEAK_MAX);
+  const total = AUTO_SPEAK_MAX - AUTO_SPEAK_MIN;
+  const start = ((minValue - AUTO_SPEAK_MIN) / total) * 100;
+  const end = ((maxValue - AUTO_SPEAK_MIN) / total) * 100;
+  return {
+    "--auto-speak-start": `${start}%`,
+    "--auto-speak-end": `${end}%`,
+  };
+});
 </script>
 
 <template>
@@ -197,6 +239,7 @@ function handleRefreshDialog() {
           <span class="marker-table__th">启用</span>
           <span class="marker-table__th">完成页</span>
           <span class="marker-table__th">收藏页</span>
+          <span class="marker-table__th">目录页</span>
         </div>
         <div
           v-for="m in markerMetas"
@@ -239,6 +282,18 @@ function handleRefreshDialog() {
                 type="checkbox"
                 role="switch"
                 @change="m.setInCollections(($event.target as HTMLInputElement).checked)"
+              />
+              <span class="toggle-mini__track" />
+            </label>
+          </span>
+          <span class="marker-table__cell">
+            <label class="toggle-mini" :class="{ 'is-disabled': !m.parent.value }">
+              <input
+                :checked="m.inIndex.value"
+                :disabled="!m.parent.value"
+                type="checkbox"
+                role="switch"
+                @change="m.setInIndex(($event.target as HTMLInputElement).checked)"
               />
               <span class="toggle-mini__track" />
             </label>
@@ -387,25 +442,33 @@ function handleRefreshDialog() {
 
         <template v-if="appStore.live2dAutoSpeakEnabled.value">
           <div class="settings-card__field">
-            <label class="settings-card__field-label">最小间隔</label>
-            <div class="settings-card__row">
+            <label class="settings-card__field-label">说话间隔</label>
+            <div class="auto-speak-range" :style="autoSpeakRangeStyle">
+              <div class="auto-speak-range__track" />
               <input
-                v-model.number="appStore.live2dAutoSpeakMinInterval.value"
+                class="auto-speak-range__input"
                 type="range"
-                min="5" max="120" step="5"
+                :value="appStore.live2dAutoSpeakMinInterval.value"
+                :min="AUTO_SPEAK_MIN"
+                :max="AUTO_SPEAK_MAX"
+                :step="AUTO_SPEAK_STEP"
+                aria-label="主动说话最短间隔"
+                @input="handleAutoSpeakMinInput"
               />
-              <span class="settings-card__range-val">{{ appStore.live2dAutoSpeakMinInterval.value }}秒</span>
+              <input
+                class="auto-speak-range__input"
+                type="range"
+                :value="appStore.live2dAutoSpeakMaxInterval.value"
+                :min="AUTO_SPEAK_MIN"
+                :max="AUTO_SPEAK_MAX"
+                :step="AUTO_SPEAK_STEP"
+                aria-label="主动说话最长间隔"
+                @input="handleAutoSpeakMaxInput"
+              />
             </div>
-          </div>
-          <div class="settings-card__field">
-            <label class="settings-card__field-label">最大间隔</label>
             <div class="settings-card__row">
-              <input
-                v-model.number="appStore.live2dAutoSpeakMaxInterval.value"
-                type="range"
-                min="5" max="300" step="5"
-              />
-              <span class="settings-card__range-val">{{ appStore.live2dAutoSpeakMaxInterval.value }}秒</span>
+              <span class="settings-card__range-val auto-speak-range__value">最短 {{ appStore.live2dAutoSpeakMinInterval.value }}秒</span>
+              <span class="settings-card__range-val auto-speak-range__value">最长 {{ appStore.live2dAutoSpeakMaxInterval.value }}秒</span>
             </div>
           </div>
         </template>
@@ -473,7 +536,7 @@ function handleRefreshDialog() {
 
 .marker-table__head {
   display: grid;
-  grid-template-columns: 1fr 52px 52px 52px;
+  grid-template-columns: 1fr 52px 52px 52px 52px;
   gap: 4px;
   padding: 4px 0;
   align-items: center;
@@ -494,7 +557,7 @@ function handleRefreshDialog() {
 
 .marker-table__row {
   display: grid;
-  grid-template-columns: 1fr 52px 52px 52px;
+  grid-template-columns: 1fr 52px 52px 52px 52px;
   gap: 4px;
   padding: 5px 8px;
   border-radius: 6px;
@@ -577,5 +640,79 @@ function handleRefreshDialog() {
 
 .model-row__del {
   flex-shrink: 0;
+}
+
+.auto-speak-range {
+  position: relative;
+  height: 24px;
+  margin: 4px 0;
+}
+
+.auto-speak-range__track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 6px;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      to right,
+      var(--border) 0,
+      var(--border) var(--auto-speak-start),
+      var(--accent) var(--auto-speak-start),
+      var(--accent) var(--auto-speak-end),
+      var(--border) var(--auto-speak-end),
+      var(--border) 100%
+    );
+}
+
+.auto-speak-range__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.auto-speak-range__input::-webkit-slider-runnable-track {
+  height: 6px;
+  background: transparent;
+}
+
+.auto-speak-range__input::-moz-range-track {
+  height: 6px;
+  background: transparent;
+}
+
+.auto-speak-range__input::-webkit-slider-thumb {
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: var(--surface);
+  cursor: pointer;
+  margin-top: -4px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.auto-speak-range__input::-moz-range-thumb {
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.auto-speak-range__value {
+  min-width: 94px;
 }
 </style>

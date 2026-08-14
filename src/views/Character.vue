@@ -3,6 +3,8 @@ import { ref, watch } from "vue";
 import { useBangumi } from "../composables/useBangumi";
 import type { CharacterDetail, CharacterPerson } from "../api/bangumi";
 import BbcodeSummary from "../components/BbcodeSummary.vue";
+import { useAppStore } from "../stores/app";
+import { useSessionStore } from "../stores/session";
 
 const props = defineProps<{
   characterId: number | null;
@@ -14,12 +16,16 @@ const emit = defineEmits<{
 }>();
 
 const bangumi = useBangumi();
+const appStore = useAppStore();
+const sessionStore = useSessionStore();
 const loading = ref(false);
 const error = ref("");
 const detail = ref<CharacterDetail | null>(null);
 const relatedPersons = ref<CharacterPerson[]>([]);
 const relatedPersonsLoading = ref(false);
 const relatedPersonsVisible = ref(6);
+const collected = ref<boolean | null>(null);
+const collectionSaving = ref(false);
 
 function cover(images?: Record<string, string | undefined>) {
   return images?.large || images?.medium || images?.small || images?.grid || "";
@@ -123,6 +129,12 @@ async function loadCharacterDetail() {
   detail.value = result.data;
   loading.value = false;
 
+  collected.value = null;
+  if (sessionStore.authenticated.value) {
+    const collectionResult = await bangumi.isCharacterCollected(characterId);
+    if (collectionResult.ok) collected.value = collectionResult.data;
+  }
+
   // 加载关联人物
   relatedPersonsLoading.value = true;
   relatedPersons.value = [];
@@ -133,6 +145,21 @@ async function loadCharacterDetail() {
   }
 
   relatedPersonsLoading.value = false;
+}
+
+async function toggleCollection() {
+  if (!detail.value || !sessionStore.authenticated.value || collectionSaving.value) return;
+  const nextCollected = !collected.value;
+  collectionSaving.value = true;
+  const result = await bangumi.setCharacterCollected(detail.value.id, nextCollected);
+  collectionSaving.value = false;
+  if (!result.ok) {
+    appStore.showToast(`收藏操作失败：${result.error}`, "error");
+    return;
+  }
+  collected.value = nextCollected;
+  detail.value.stat.collects = Math.max(0, detail.value.stat.collects + (nextCollected ? 1 : -1));
+  appStore.showToast(nextCollected ? "已收藏角色。" : "已取消收藏角色。", "success");
 }
 
 watch(
@@ -169,6 +196,15 @@ defineExpose({
           <div class="person-hero__main">
             <h5>{{ detail.name || `Character #${detail.id}` }}</h5>
             <p class="detail-muted">{{ characterTypeLabel(detail.type) }}</p>
+            <button
+              v-if="sessionStore.authenticated.value"
+              class="primary-button entity-collection-button"
+              type="button"
+              :disabled="collectionSaving || collected === null"
+              @click="toggleCollection"
+            >
+              {{ collectionSaving ? "保存中..." : collected ? "取消收藏" : "收藏角色" }}
+            </button>
           </div>
         </div>
         <BbcodeSummary :content="detail.summary" />

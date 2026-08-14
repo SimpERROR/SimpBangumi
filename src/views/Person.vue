@@ -4,6 +4,8 @@ import { useBangumi } from "../composables/useBangumi";
 import type { PersonDetail } from "../api/bangumi";
 import BbcodeSummary from "../components/BbcodeSummary.vue";
 import { formatReadableDateTime } from "../utils/datetime";
+import { useAppStore } from "../stores/app";
+import { useSessionStore } from "../stores/session";
 
 const props = defineProps<{
   personId: number | null;
@@ -14,9 +16,13 @@ const emit = defineEmits<{
 }>();
 
 const bangumi = useBangumi();
+const appStore = useAppStore();
+const sessionStore = useSessionStore();
 const loading = ref(false);
 const error = ref("");
 const detail = ref<PersonDetail | null>(null);
+const collected = ref<boolean | null>(null);
+const collectionSaving = ref(false);
 
 function cover(images?: Record<string, string | undefined>) {
   return images?.large || images?.medium || images?.small || images?.grid || "";
@@ -112,6 +118,27 @@ async function loadPersonDetail() {
 
   detail.value = result.data;
   loading.value = false;
+
+  collected.value = null;
+  if (sessionStore.authenticated.value) {
+    const collectionResult = await bangumi.isPersonCollected(personId);
+    if (collectionResult.ok) collected.value = collectionResult.data;
+  }
+}
+
+async function toggleCollection() {
+  if (!detail.value || !sessionStore.authenticated.value || collectionSaving.value) return;
+  const nextCollected = !collected.value;
+  collectionSaving.value = true;
+  const result = await bangumi.setPersonCollected(detail.value.id, nextCollected);
+  collectionSaving.value = false;
+  if (!result.ok) {
+    appStore.showToast(`收藏操作失败：${result.error}`, "error");
+    return;
+  }
+  collected.value = nextCollected;
+  detail.value.stat.collects = Math.max(0, detail.value.stat.collects + (nextCollected ? 1 : -1));
+  appStore.showToast(nextCollected ? "已收藏人物。" : "已取消收藏人物。", "success");
 }
 
 watch(
@@ -151,6 +178,15 @@ defineExpose({
             <div class="tags-strip" v-if="detail.career?.length">
               <span v-for="career in detail.career" :key="career" class="tag-chip tag-chip--meta">{{ personCareerLabel(career) }}</span>
             </div>
+            <button
+              v-if="sessionStore.authenticated.value"
+              class="primary-button entity-collection-button"
+              type="button"
+              :disabled="collectionSaving || collected === null"
+              @click="toggleCollection"
+            >
+              {{ collectionSaving ? "保存中..." : collected ? "取消收藏" : "收藏人物" }}
+            </button>
           </div>
         </div>
         <BbcodeSummary :content="detail.summary" />

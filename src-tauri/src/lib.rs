@@ -2,6 +2,7 @@ mod auth;
 mod bangumi;
 mod diagnostics;
 mod mal_scraper;
+mod ratings;
 
 use std::collections::BTreeMap;
 
@@ -2280,6 +2281,11 @@ pub fn run() {
             bangumi_capture_embedded_web_cookie,
             diagnostics::export_diagnostics,
             mal_scraper::mal_scrape_anime,
+            ratings::anilist_search_rating,
+            ratings::tmdb_search_rating,
+            ratings::imdb_search_rating,
+            ratings::tmdb_scrape_rating,
+            ratings::imdb_scrape_rating,
             save_image_to_path,
             save_image_bytes_to_path,
             check_github_update

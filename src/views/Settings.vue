@@ -8,6 +8,8 @@ const DeveloperSettings = defineAsyncComponent(() => import("./settings/Develope
 const AboutSettings = defineAsyncComponent(() => import("./settings/AboutSettings.vue"));
 const WebLoginSettings = defineAsyncComponent(() => import("./settings/WebLoginSettings.vue"));
 const BroadcastSettings = defineAsyncComponent(() => import("./settings/BroadcastSettings.vue"));
+const RatingComparisonSettings = defineAsyncComponent(() => import("./settings/RatingComparisonSettings.vue"));
+const LabSettings = defineAsyncComponent(() => import("./settings/LabSettings.vue"));
 const UpdateSettings = defineAsyncComponent(() => import("./settings/UpdateSettings.vue"));
 const LegalComplianceSettings = defineAsyncComponent(() => import("./settings/LegalComplianceSettings.vue"));
 
@@ -19,6 +21,8 @@ function preloadSettingsPages() {
     import("./settings/AboutSettings.vue"),
     import("./settings/WebLoginSettings.vue"),
     import("./settings/BroadcastSettings.vue"),
+    import("./settings/RatingComparisonSettings.vue"),
+    import("./settings/LabSettings.vue"),
     import("./settings/UpdateSettings.vue"),
     import("./settings/LegalComplianceSettings.vue"),
   ];
@@ -35,7 +39,7 @@ function preloadSettingsPages() {
   }, 150);
 }
 
-type SettingsPage = "home" | "display" | "collection" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance";
+type SettingsPage = "home" | "display" | "collection" | "web-login" | "broadcast" | "rating-comparison" | "lab" | "update" | "about" | "developer" | "legal-compliance";
 
 const activePage = ref<SettingsPage>("home");
 
@@ -60,6 +64,14 @@ const pageTitle = computed(() => {
     return "配信跟踪（Beta）";
   }
 
+  if (activePage.value === "rating-comparison") {
+    return "多平台评分比对";
+  }
+
+  if (activePage.value === "lab") {
+    return "实验室";
+  }
+
   if (activePage.value === "update") {
     return "更新选项";
   }
@@ -75,7 +87,7 @@ const pageTitle = computed(() => {
   return "设置";
 });
 
-function openPage(page: "display" | "collection" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance") {
+function openPage(page: Exclude<SettingsPage, "home">) {
   activePage.value = page;
 }
 
@@ -108,6 +120,8 @@ onMounted(() => {
     <CollectionSettings v-else-if="activePage === 'collection'" />
     <WebLoginSettings v-else-if="activePage === 'web-login'" />
     <BroadcastSettings v-else-if="activePage === 'broadcast'" />
+    <RatingComparisonSettings v-else-if="activePage === 'rating-comparison'" />
+    <LabSettings v-else-if="activePage === 'lab'" />
     <UpdateSettings v-else-if="activePage === 'update'" />
     <DeveloperSettings v-else-if="activePage === 'developer'" />
     <LegalComplianceSettings v-else-if="activePage === 'legal-compliance'" />

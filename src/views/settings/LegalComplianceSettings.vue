@@ -49,12 +49,12 @@ onMounted(() => {
       </div>
 
       <div v-if="activePage === 'home'" class="onboarding__panel settings-page">
-        <p class="onboarding__description">查看与本应用相关的数据处理、安全机制、可选小游戏分析、知识产权和开源许可说明。</p>
+        <p class="onboarding__description">查看与本应用相关的数据处理、安全机制、可选多平台评分与小游戏分析、知识产权和开源许可说明。</p>
         <div class="settings-entry-list">
           <button class="item item--button settings-entry" type="button" @click="openPage('privacy-data')">
             <div class="settings-entry__content">
               <h3>隐私与数据处理</h3>
-              <p>了解必要数据、本地小游戏分析、数据控制与第三方服务。</p>
+              <p>了解必要数据、多平台评分、本地小游戏分析、数据控制与第三方服务。</p>
             </div>
             <span class="settings-entry__chevron" aria-hidden="true">></span>
           </button>

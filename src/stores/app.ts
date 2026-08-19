@@ -6,6 +6,9 @@ export type CollectionTypeFilter = 1 | 2 | 3 | 4 | 5 | "all";
 export type TitlePreference = "translated" | "original";
 
 export const NSFW_FIRST_NOTICE_SEEN_KEY = "bangumi.live2d.nsfwFirstNoticeSeen";
+export const RATING_ANOMALY_DETECTION_KEY = "bangumi.experimental.ratingAnomalyDetection";
+export const COLLECTION_DISTRIBUTION_ANALYSIS_KEY = "bangumi.experimental.collectionDistributionAnalysis";
+export const OVERALL_WORK_OPINION_KEY = "bangumi.experimental.overallWorkOpinion";
 
 const theme = ref<ThemeMode>("light");
 const loading = ref(false);
@@ -55,6 +58,23 @@ const collectionSaveSuccessCounter = ref(0);
 
 // 更新选项
 const checkUpdateOnStartup = ref(true);
+
+// 实验性功能
+const ratingAnomalyDetectionEnabled = ref(loadBool(RATING_ANOMALY_DETECTION_KEY, false));
+function setRatingAnomalyDetectionEnabled(value: boolean) {
+  ratingAnomalyDetectionEnabled.value = value;
+  saveBool(RATING_ANOMALY_DETECTION_KEY, value);
+}
+const collectionDistributionAnalysisEnabled = ref(loadBool(COLLECTION_DISTRIBUTION_ANALYSIS_KEY, false));
+function setCollectionDistributionAnalysisEnabled(value: boolean) {
+  collectionDistributionAnalysisEnabled.value = value;
+  saveBool(COLLECTION_DISTRIBUTION_ANALYSIS_KEY, value);
+}
+const overallWorkOpinionEnabled = ref(loadBool(OVERALL_WORK_OPINION_KEY, false));
+function setOverallWorkOpinionEnabled(value: boolean) {
+  overallWorkOpinionEnabled.value = value;
+  saveBool(OVERALL_WORK_OPINION_KEY, value);
+}
 
 // 收藏与进度
 const AUTO_MARK_EPISODES_SEEN_KEY = "bangumi.collection.autoMarkEpisodesSeen";
@@ -231,6 +251,12 @@ export function useAppStore() {
     live2dAutoSpeakMinInterval,
     live2dAutoSpeakMaxInterval,
     checkUpdateOnStartup,
+    ratingAnomalyDetectionEnabled,
+    setRatingAnomalyDetectionEnabled,
+    collectionDistributionAnalysisEnabled,
+    setCollectionDistributionAnalysisEnabled,
+    overallWorkOpinionEnabled,
+    setOverallWorkOpinionEnabled,
     autoMarkEpisodesSeen,
     setAutoMarkEpisodesSeen,
     workersCommunicating,

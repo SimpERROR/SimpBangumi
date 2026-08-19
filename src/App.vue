@@ -34,6 +34,7 @@ const SearchView = defineAsyncComponent(() => import("./views/Search.vue"));
 const SettingsView = defineAsyncComponent(loadSettingsView);
 const MyView = defineAsyncComponent(() => import("./views/My.vue"));
 const LibraryView = defineAsyncComponent(() => import("./views/Library.vue"));
+const MoreView = defineAsyncComponent(() => import("./views/More.vue"));
 const Live2dCompanion = defineAsyncComponent(() => import("./components/Live2dCompanion.vue"));
 
 function preloadAsyncViews() {
@@ -44,6 +45,7 @@ function preloadAsyncViews() {
     loadSettingsView(),
     import("./views/My.vue"),
     import("./views/Library.vue"),
+    import("./views/More.vue"),
     import("./components/Live2dCompanion.vue"),
   ];
 
@@ -290,6 +292,23 @@ async function ensureCollectionsViewMounted() {
   collectionsViewLoaded.value = true;
   await loadCollectionsView();
   await nextTick();
+
+  // Async component resolution and its parent render can complete in separate
+  // flushes. Wait for the exposed instance instead of dropping the first
+  // navigation request while the ref is still null.
+  if (!collectionsViewRef.value) {
+    await new Promise<void>((resolve) => {
+      const stop = watch(
+        collectionsViewRef,
+        (value) => {
+          if (!value) return;
+          stop();
+          resolve();
+        },
+        { flush: "post" },
+      );
+    });
+  }
 }
 
 async function handleSearchOpenSubject(subjectId: number) {
@@ -772,9 +791,7 @@ onUnmounted(() => {
       </div>
 
       <div v-if="activeHomeTab === 'more'" class="view-host view-host--more">
-        <section class="coming-soon">
-          <p class="coming-soon__subtitle">敬请期待……</p>
-        </section>
+        <MoreView />
       </div>
 
       <div v-if="activeHomeTab === 'my'" class="view-host view-host--my">

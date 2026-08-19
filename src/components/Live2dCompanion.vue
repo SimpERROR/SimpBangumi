@@ -212,6 +212,10 @@ const rendering = ref(false);
 let pendingModelUrl: string | null = null;
 const internalVisible = ref(props.visible);
 const containerHovered = ref(false);
+const overlapsDetailText = ref(false);
+let overlapCheckFrame: number | null = null;
+let detailMutationObserver: MutationObserver | null = null;
+let companionResizeObserver: ResizeObserver | null = null;
 
 watch(() => props.visible, (v) => {
   internalVisible.value = v;
@@ -243,6 +247,131 @@ const canvasStyle = computed(() => ({
 }));
 
 const hasModel = computed(() => (props.modelUrl ?? "").trim().length > 0);
+
+function visibleModelRect(): DOMRect | null {
+  const container = containerRef.value;
+  if (!container || collapsed.value || !hasModel.value) return null;
+
+  const containerRect = container.getBoundingClientRect();
+  const modelWidth = originalModelWidth.value * modelScale.value;
+  const modelHeight = originalModelHeight.value * modelScale.value;
+  if (modelWidth <= 0 || modelHeight <= 0) return containerRect;
+
+  const left = containerRect.left + Math.max(0, modelPosX.value);
+  const top = containerRect.top + Math.max(0, modelPosY.value);
+  const right = containerRect.left + Math.min(props.canvasWidth, modelPosX.value + modelWidth);
+  const bottom = containerRect.top + Math.min(props.canvasHeight, modelPosY.value + modelHeight);
+  if (right <= left || bottom <= top) return null;
+
+  return new DOMRect(left, top, right - left, bottom - top);
+}
+
+function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function opaqueModelPixelOverlaps(
+  textRect: DOMRect,
+  containerRect: DOMRect,
+  pixels: Uint8Array | Uint8ClampedArray,
+  pixelWidth: number,
+  pixelHeight: number,
+): boolean {
+  const left = Math.max(textRect.left, containerRect.left);
+  const right = Math.min(textRect.right, containerRect.right);
+  const top = Math.max(textRect.top, containerRect.top);
+  const bottom = Math.min(textRect.bottom, containerRect.bottom);
+  if (right <= left || bottom <= top) return false;
+
+  const scaleX = pixelWidth / containerRect.width;
+  const scaleY = pixelHeight / containerRect.height;
+  const startX = Math.max(0, Math.floor((left - containerRect.left) * scaleX));
+  const endX = Math.min(pixelWidth, Math.ceil((right - containerRect.left) * scaleX));
+  const startY = Math.max(0, Math.floor((top - containerRect.top) * scaleY));
+  const endY = Math.min(pixelHeight, Math.ceil((bottom - containerRect.top) * scaleY));
+
+  for (let y = startY; y < endY; y += 1) {
+    for (let x = startX; x < endX; x += 1) {
+      if (pixels[(y * pixelWidth + x) * 4 + 3] > 24) return true;
+    }
+  }
+  return false;
+}
+
+function updateDetailTextOverlap() {
+  overlapCheckFrame = null;
+  if (!props.pointerThrough) {
+    overlapsDetailText.value = false;
+    return;
+  }
+
+  const modelRect = visibleModelRect();
+  const detailContent = document.querySelector<HTMLElement>(".detail-drawer .detail-content");
+  if (!modelRect || !detailContent) {
+    overlapsDetailText.value = false;
+    return;
+  }
+
+  const walker = document.createTreeWalker(detailContent, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.textContent?.trim()) return NodeFilter.FILTER_REJECT;
+      const parent = node.parentElement;
+      if (!parent || parent.closest('[aria-hidden="true"]')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  const containerRect = containerRef.value?.getBoundingClientRect();
+  let renderedPixels: Uint8Array | Uint8ClampedArray | null = null;
+  let pixelWidth = 0;
+  let pixelHeight = 0;
+  let textNode = walker.nextNode();
+  while (textNode) {
+    const range = document.createRange();
+    range.selectNodeContents(textNode);
+    for (const textRect of range.getClientRects()) {
+      if (!rectsOverlap(modelRect, textRect) || !containerRect || !pixiApp) continue;
+      if (!renderedPixels) {
+        try {
+          renderedPixels = pixiApp.renderer.extract.pixels(
+            pixiApp.stage,
+            new PIXI.Rectangle(0, 0, props.canvasWidth, props.canvasHeight),
+          );
+          pixelWidth = Math.round(props.canvasWidth * pixiApp.renderer.resolution);
+          pixelHeight = Math.round(props.canvasHeight * pixiApp.renderer.resolution);
+        } catch {
+          overlapsDetailText.value = false;
+          return;
+        }
+      }
+      if (opaqueModelPixelOverlaps(textRect, containerRect, renderedPixels, pixelWidth, pixelHeight)) {
+        overlapsDetailText.value = true;
+        return;
+      }
+    }
+    textNode = walker.nextNode();
+  }
+  overlapsDetailText.value = false;
+}
+
+function scheduleDetailTextOverlapCheck() {
+  if (overlapCheckFrame !== null) return;
+  overlapCheckFrame = requestAnimationFrame(updateDetailTextOverlap);
+}
+
+function observeDetailTextChanges() {
+  detailMutationObserver?.disconnect();
+  const detailDrawer = document.querySelector<HTMLElement>(".detail-drawer");
+  if (!detailDrawer) return;
+  detailMutationObserver = new MutationObserver(scheduleDetailTextOverlapCheck);
+  detailMutationObserver.observe(detailDrawer, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ["class", "style", "hidden"],
+  });
+}
 
 function isLocalPath(url: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(url) || url.startsWith("/");
@@ -789,6 +918,12 @@ function toggleCollapse() {
 
 // ── Lifecycle ───────────────────────────────────────────
 onMounted(async () => {
+  window.addEventListener("resize", scheduleDetailTextOverlapCheck);
+  window.addEventListener("scroll", scheduleDetailTextOverlapCheck, true);
+  document.addEventListener("transitionend", scheduleDetailTextOverlapCheck, true);
+  companionResizeObserver = new ResizeObserver(scheduleDetailTextOverlapCheck);
+  if (containerRef.value) companionResizeObserver.observe(containerRef.value);
+
   // 从文件加载对话内容
   await Promise.all([reloadDialogMessages(), reloadNsfwMessages()]);
 
@@ -805,6 +940,12 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (zoomAnimFrame !== null) cancelAnimationFrame(zoomAnimFrame);
+  if (overlapCheckFrame !== null) cancelAnimationFrame(overlapCheckFrame);
+  window.removeEventListener("resize", scheduleDetailTextOverlapCheck);
+  window.removeEventListener("scroll", scheduleDetailTextOverlapCheck, true);
+  document.removeEventListener("transitionend", scheduleDetailTextOverlapCheck, true);
+  detailMutationObserver?.disconnect();
+  companionResizeObserver?.disconnect();
   if (dialogTimer.value !== null) window.clearTimeout(dialogTimer.value);
   clearAutoSpeak();
   destroyModel();
@@ -821,6 +962,26 @@ watch(
     if (!props.visible) return;
     loadModel(newUrl ?? "");
   },
+);
+
+watch(
+  () => props.pointerThrough,
+  async (pointerThrough) => {
+    if (!pointerThrough) {
+      detailMutationObserver?.disconnect();
+      overlapsDetailText.value = false;
+      return;
+    }
+    await nextTick();
+    observeDetailTextChanges();
+    scheduleDetailTextOverlapCheck();
+  },
+  { immediate: true },
+);
+
+watch(
+  [modelPosX, modelPosY, modelScale, originalModelWidth, originalModelHeight, collapsed, () => appStore.detailBackToTopVisible.value],
+  scheduleDetailTextOverlapCheck,
 );
 
 // 主动说话：监听可见性 + 开关变化
@@ -956,6 +1117,7 @@ defineExpose({
         'live2d-companion--loading': modelLoading,
         'live2d-companion--locked': appStore.live2dOperationLocked.value,
         'live2d-companion--idle': hasModel && !collapsed && !containerHovered,
+        'live2d-companion--over-text': overlapsDetailText,
       }"
       :style="containerStyle"
       role="complementary"
@@ -1150,6 +1312,11 @@ defineExpose({
   user-select: none;
   overflow: hidden;
   border-radius: inherit;
+  transition: opacity 0.2s ease;
+}
+
+.live2d-companion--over-text .live2d-companion__stage {
+  opacity: 0.38;
 }
 
 .live2d-companion--locked .live2d-companion__stage {

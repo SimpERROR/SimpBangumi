@@ -119,6 +119,8 @@ function matchScore(candidate: TenraiAnimeSearchItem, bgmName: string, bgmYear?:
   return matchScoreDetail(candidate, bgmName, bgmYear, bgmEpisodes).total;
 }
 
+const inFlightMatches = new Map<number, Promise<AnimeMatchInfo | null>>();
+
 /**
  * Match a Bangumi anime subject to a Tenrai/MAL entry.
  *
@@ -133,6 +135,32 @@ function matchScore(candidate: TenraiAnimeSearchItem, bgmName: string, bgmYear?:
  * @param bgmImages  Bangumi subject images record (for cover comparison)
  */
 export async function matchAnimeToTenrai(
+  bgmId: number,
+  bgmName: string,
+  bgmAirDate?: string,
+  bgmEpisodes?: number,
+  bgmImages?: Record<string, string | undefined>,
+): Promise<AnimeMatchInfo | null> {
+  const cached = getCachedMatch(bgmId);
+  if (cached) return cached;
+
+  const existing = inFlightMatches.get(bgmId);
+  if (existing) return existing;
+
+  const promise = matchAnimeToTenraiUncached(
+    bgmId,
+    bgmName,
+    bgmAirDate,
+    bgmEpisodes,
+    bgmImages,
+  ).finally(() => {
+    inFlightMatches.delete(bgmId);
+  });
+  inFlightMatches.set(bgmId, promise);
+  return promise;
+}
+
+async function matchAnimeToTenraiUncached(
   bgmId: number,
   bgmName: string,
   bgmAirDate?: string,

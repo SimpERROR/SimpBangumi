@@ -88,7 +88,7 @@ fn parse_mal_html(html: &str, mal_id: u64) -> Result<MalAnimeInfo, String> {
     let broadcast_raw = extract_sidebar_value(html, "Broadcast:");
     let (broadcast_day, broadcast_time) = parse_broadcast(&broadcast_raw);
 
-    let score_str = extract_sidebar_value(html, "Score:");
+    let score_str = extract_score(html);
     let score = score_str
         .and_then(|s| s.trim().parse::<f64>().ok())
         .filter(|&s| s > 0.0);
@@ -150,6 +150,22 @@ fn extract_sidebar_alt_title(html: &str, label: &str) -> Option<String> {
     } else {
         Some(value)
     }
+}
+
+/// Extract the score, preferring the `itemprop="ratingValue"` element (the big score box at the
+/// top of the page), falling back to the "Score:" sidebar stats line if that's not found.
+fn extract_score(html: &str) -> Option<String> {
+    if let Some(pos) = html.find("itemprop=\"ratingValue\"") {
+        let after = &html[pos + "itemprop=\"ratingValue\"".len()..];
+        let tag_end = after.find('>')?;
+        let after_tag = &after[tag_end + 1..];
+        let value_end = after_tag.find('<').unwrap_or(after_tag.len());
+        let value = after_tag[..value_end].trim();
+        if !value.is_empty() && value != "N/A" {
+            return Some(value.to_string());
+        }
+    }
+    extract_sidebar_value(html, "Score:")
 }
 
 /// Extract a value from the MAL sidebar info table

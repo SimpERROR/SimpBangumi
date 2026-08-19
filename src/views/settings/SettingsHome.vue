@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const emit = defineEmits<{
-  (event: "open-page", page: "display" | "collection" | "web-login" | "broadcast" | "update" | "about" | "developer" | "legal-compliance"): void;
+  (event: "open-page", page: "display" | "collection" | "web-login" | "broadcast" | "rating-comparison" | "lab" | "update" | "about" | "developer" | "legal-compliance"): void;
 }>();
 
 function openDisplaySettings() {
@@ -13,6 +13,14 @@ function openCollectionSettings() {
 
 function openBroadcastSettings() {
   emit("open-page", "broadcast");
+}
+
+function openRatingComparisonSettings() {
+  emit("open-page", "rating-comparison");
+}
+
+function openLabSettings() {
+  emit("open-page", "lab");
 }
 
 function openUpdateSettings() {
@@ -69,6 +77,22 @@ function openDeveloperSettings() {
         <div class="settings-entry__content">
           <h3>配信跟踪（Beta）</h3>
           <p>配置番剧配信数据源与匹配行为。</p>
+        </div>
+        <span class="settings-entry__chevron" aria-hidden="true">></span>
+      </button>
+
+      <button class="item item--button settings-entry" type="button" @click="openRatingComparisonSettings">
+        <div class="settings-entry__content">
+          <h3>多平台评分比对</h3>
+          <p>对比 MAL / AniList / IMDb / TMDB 评分，生成综合评分。</p>
+        </div>
+        <span class="settings-entry__chevron" aria-hidden="true">></span>
+      </button>
+
+      <button class="item item--button settings-entry" type="button" @click="openLabSettings">
+        <div class="settings-entry__content">
+          <h3>实验室</h3>
+          <p>管理仍在验证中的实验性功能。</p>
         </div>
         <span class="settings-entry__chevron" aria-hidden="true">></span>
       </button>

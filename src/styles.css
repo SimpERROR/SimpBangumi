@@ -4783,27 +4783,53 @@ button.is-dropped:hover {
   backdrop-filter: blur(12px);
 }
 .overall-opinion__orb {
-  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  display: grid; place-items: center; width: 42px; height: 42px; padding: 0;
   border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface)); font-size: 17px; cursor: grab;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface)); cursor: grab;
   touch-action: none; user-select: none;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 10%, transparent); transition: transform .15s ease, box-shadow .15s ease;
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--text) 13%, transparent); transition: transform .15s ease, box-shadow .15s ease;
   transform: translate(var(--overall-opinion-x, 0px), var(--overall-opinion-y, 0px));
 }
 .overall-opinion__orb:active { cursor: grabbing; }
 .overall-opinion__orb.is-dragging { transition: none; }
+.overall-opinion__orb.is-dragging, .overall-opinion__orb:hover { animation-play-state: paused; }
 .overall-opinion__orb:hover { transform: translate(var(--overall-opinion-x, 0px), calc(var(--overall-opinion-y, 0px) - 1px)); box-shadow: 0 4px 12px color-mix(in srgb, var(--text) 16%, transparent); }
 .overall-opinion__orb.is-watch { border-color: color-mix(in srgb, #d78b2d 65%, var(--border)); background: color-mix(in srgb, #d78b2d 12%, var(--surface)); }
 .overall-opinion__orb.is-clear { border-color: color-mix(in srgb, var(--success, #4d9e78) 55%, var(--border)); }
+.overall-opinion__orb.is-insufficient { border-color: color-mix(in srgb, #6f8ca8 58%, var(--border)); background: color-mix(in srgb, #6f8ca8 13%, var(--surface)); }
+.overall-opinion__orb.is-strong, .overall-opinion__orb.is-steady { border-color: color-mix(in srgb, #159a8c 58%, var(--border)); background: color-mix(in srgb, #159a8c 12%, var(--surface)); }
+.overall-opinion__orb.is-disputed, .overall-opinion__orb.is-selective, .overall-opinion__orb.is-weak { border-color: color-mix(in srgb, #c46d48 62%, var(--border)); background: color-mix(in srgb, #c46d48 12%, var(--surface)); }
+.overall-opinion__face { position: relative; display: block; width: 25px; height: 25px; color: color-mix(in srgb, var(--text) 78%, var(--accent)); translate: var(--overall-opinion-face-x, 0) var(--overall-opinion-face-y, 0); transition: translate .2s cubic-bezier(.2, .9, .3, 1.2); animation: overall-opinion-face-breathe 3.1s ease-in-out infinite; }
+.overall-opinion__orb.is-changing .overall-opinion__face { animation: overall-opinion-face-change .56s cubic-bezier(.22, .8, .32, 1) both, overall-opinion-face-breathe 3.1s ease-in-out .56s infinite; }
+.overall-opinion__face-eyes { position: absolute; top: 7px; left: 5px; right: 5px; display: flex; justify-content: space-between; }
+.overall-opinion__face-eyes i { display: block; width: 2px; height: 8px; border-left: 2.4px solid currentColor; transition: width .16s ease, height .16s ease, border-color .12s ease, transform .2s cubic-bezier(.2, .9, .3, 1.25); animation: overall-opinion-blink 5.4s ease-in-out infinite, overall-opinion-look 6s cubic-bezier(.45, 0, .25, 1) infinite; }
+.overall-opinion__face-eyes i:last-child { animation-delay: 0s, 0s; }
+.overall-opinion__orb.is-open .overall-opinion__face-eyes i { animation-name: overall-opinion-blink, overall-opinion-look-open; animation-duration: 5.4s, 7.4s; }
+.overall-opinion__face-mouth { position: absolute; left: 8px; top: 16px; width: 9px; height: 5px; border: 2.4px solid currentColor; border-top: 0; border-radius: 0 0 9px 9px; transition: top .18s ease, left .18s ease, width .18s ease, border-color .12s ease, transform .2s cubic-bezier(.2, .9, .3, 1.2); }
+.overall-opinion__orb.is-insufficient .overall-opinion__face { color: #6285a7; }
+.overall-opinion__orb.is-insufficient .overall-opinion__face-mouth { top: 17px; height: 4px; border-top: 2.4px solid currentColor; border-bottom: 0; border-radius: 9px 9px 0 0; }
+.overall-opinion__orb.is-watch .overall-opinion__face { color: #b87921; }
+.overall-opinion__orb.is-watch .overall-opinion__face-mouth { top: 17px; width: 8px; height: 2.4px; border: 0; border-radius: 3px; background: currentColor; }
+.overall-opinion__orb.is-disputed .overall-opinion__face-mouth, .overall-opinion__orb.is-selective .overall-opinion__face-mouth, .overall-opinion__orb.is-weak .overall-opinion__face-mouth { top: 17px; height: 5px; border-top: 2.4px solid currentColor; border-bottom: 0; border-radius: 9px 9px 0 0; }
+.overall-opinion__orb.is-strong .overall-opinion__face, .overall-opinion__orb.is-clear .overall-opinion__face { color: #287454; }
+.overall-opinion__orb:active .overall-opinion__face-eyes i, .overall-opinion__orb.is-dragging .overall-opinion__face-eyes i { width: 6px; height: 6px; border: 0; border-top: 2.4px solid currentColor; border-right: 2.4px solid currentColor; animation: none; translate: 0 0; }
+.overall-opinion__orb:active .overall-opinion__face-eyes i:first-child, .overall-opinion__orb.is-dragging .overall-opinion__face-eyes i:first-child { translate: -2px 0; transform: rotate(45deg); }
+.overall-opinion__orb:active .overall-opinion__face-eyes i:last-child, .overall-opinion__orb.is-dragging .overall-opinion__face-eyes i:last-child { translate: 2px 0; transform: rotate(225deg); }
+@keyframes overall-opinion-face-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@keyframes overall-opinion-face-change { 0% { opacity: .45; transform: scale(.72) rotate(-8deg); } 48% { opacity: 1; transform: scale(1.1) rotate(3deg); } 72% { transform: scale(.97) rotate(-1deg); } 100% { opacity: 1; transform: scale(1) rotate(0); } }
+@keyframes overall-opinion-blink { 0%, 44%, 48%, 100% { transform: scaleY(1); } 46% { transform: scaleY(.15); } }
+@keyframes overall-opinion-look { 0%, 14%, 72%, 100% { translate: 0 0; } 24%, 38% { translate: -2px 0; } 48%, 62% { translate: 2px 0; } }
+@keyframes overall-opinion-look-open { 0%, 12%, 48%, 70%, 100% { translate: 0 0; } 20%, 31% { translate: -2px 0; } 39%, 44% { translate: 2px 0; } 79%, 86% { translate: 0 2px; } }
+@media (prefers-reduced-motion: reduce) { .overall-opinion__orb, .overall-opinion__face, .overall-opinion__face-eyes i { animation: none !important; transition: none; } }
 .overall-opinion__panel { width: min(100%, 520px); margin-top: 8px; padding: 13px 14px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 7px; background: var(--surface, #ffffff); box-shadow: 0 12px 32px color-mix(in srgb, #000 24%, transparent); }
 .overall-opinion__panel.is-watch { border-left-color: #d78b2d; }
 .overall-opinion__panel.is-clear { border-left-color: var(--success, #4d9e78); }
-.overall-opinion__panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.overall-opinion__panel-head > div { min-width: 0; flex: 1; }
+.overall-opinion__panel-head { display: grid; gap: 5px; min-height: 44px; }
+.overall-opinion__panel-topline { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
 .overall-opinion__eyebrow { color: var(--muted); font-size: 10px; }
-.overall-opinion__panel h5 { min-width: 0; max-width: 100%; margin: 4px 0 0; padding-right: 2px; color: var(--text); font-size: 15px; line-height: 1.4; white-space: normal; overflow: visible; text-overflow: clip; text-wrap: balance; overflow-wrap: anywhere; }
+.overall-opinion__panel h5 { min-width: 0; max-width: 100%; margin: 4px 0 0; padding-right: 0; color: var(--text); font-size: 15px; line-height: 1.4; white-space: normal; overflow: visible; text-overflow: clip; text-wrap: pretty; overflow-wrap: anywhere; }
 .overall-opinion__title-subject { color: var(--text); }
-.overall-opinion__title-emphasis { padding: 1px 3px; border-radius: 3px; font-weight: 800; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.overall-opinion__title-emphasis { display: inline-block; padding: 1px 3px; border-radius: 3px; font-weight: 800; white-space: nowrap; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
 .overall-opinion__title-emphasis.is-positive { color: var(--success, #4d9e78); text-decoration-color: color-mix(in srgb, var(--success, #4d9e78) 42%, transparent); }
 .overall-opinion__title-emphasis.is-warning { color: #d78b2d; text-decoration-color: color-mix(in srgb, #d78b2d 45%, transparent); }
 .overall-opinion__title-emphasis.is-neutral { color: var(--accent); text-decoration-color: color-mix(in srgb, var(--accent) 42%, transparent); }
@@ -4852,6 +4878,46 @@ button.is-dropped:hover {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.overall-opinion__recommendation-rank.is-rank-sss {
+  border-color: color-mix(in srgb, #c58a28 62%, var(--border));
+  color: color-mix(in srgb, #8b5b08 72%, var(--text));
+  background: color-mix(in srgb, #e7b84b 23%, var(--surface));
+}
+.overall-opinion__recommendation-rank.is-rank-ss {
+  border-color: color-mix(in srgb, #d47735 58%, var(--border));
+  color: color-mix(in srgb, #a14d1d 72%, var(--text));
+  background: color-mix(in srgb, #ed9a55 19%, var(--surface));
+}
+.overall-opinion__recommendation-rank.is-rank-s {
+  border-color: color-mix(in srgb, #159a8c 58%, var(--border));
+  color: color-mix(in srgb, #08796e 72%, var(--text));
+  background: color-mix(in srgb, #3ab9aa 17%, var(--surface));
+}
+.overall-opinion__recommendation-rank.is-rank-a {
+  border-color: color-mix(in srgb, #4d9e78 58%, var(--border));
+  color: color-mix(in srgb, #287454 72%, var(--text));
+  background: color-mix(in srgb, #62b98c 17%, var(--surface));
+}
+.overall-opinion__recommendation-rank.is-rank-b {
+  border-color: color-mix(in srgb, #4f83b8 56%, var(--border));
+  color: color-mix(in srgb, #35689b 72%, var(--text));
+  background: color-mix(in srgb, #72a5d8 17%, var(--surface));
+}
+.overall-opinion__recommendation-rank.is-rank-c {
+  border-color: color-mix(in srgb, #8068ad 54%, var(--border));
+  color: color-mix(in srgb, #654d96 72%, var(--text));
+  background: color-mix(in srgb, #9b82c7 16%, var(--surface));
+}
+.overall-opinion__recommendation-rank.is-rank-d {
+  border-color: color-mix(in srgb, #bb6560 52%, var(--border));
+  color: color-mix(in srgb, #984944 72%, var(--text));
+  background: color-mix(in srgb, #d9827b 15%, var(--surface));
+}
+.overall-opinion__recommendation-rank.is-rank-unknown {
+  border-color: var(--border);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 9%, var(--surface));
+}
 .overall-opinion__advice {
   display: grid;
   gap: 4px;
@@ -4884,6 +4950,10 @@ button.is-dropped:hover {
 .overall-opinion__section > strong { color: var(--text); font-size: 11px; line-height: 1.4; }
 .overall-opinion__section p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
 .overall-opinion__close { border: 0; background: transparent; color: var(--muted); font-size: 19px; line-height: 1; cursor: pointer; }
+.overall-opinion__panel-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.overall-opinion__copy { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 4px 7px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); background: color-mix(in srgb, var(--surface) 80%, transparent); font-size: 10px; cursor: pointer; }
+.overall-opinion__copy:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.overall-opinion__copy span:first-child { font-size: 14px; line-height: 1; }
 .overall-opinion-panel-enter-active,
 .overall-opinion-panel-leave-active { transition: opacity .16s ease, transform .16s cubic-bezier(.2,.8,.2,1); transform-origin: top right; }
 .overall-opinion__panel { transform: translate(var(--overall-opinion-x, 0px), var(--overall-opinion-y, 0px)); }
@@ -5497,6 +5567,65 @@ button.is-dropped:hover {
   font-size: 14px;
 }
 
+.my-advice-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.my-advice-banner__icon {
+  display: grid;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 1px;
+}
+
+.my-advice-banner__content { min-width: 0; flex: 1; }
+.my-advice-banner__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.my-advice-banner__title { margin: 0; color: var(--text); font-weight: 650; line-height: 22px; }
+.my-advice-banner__toggle {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--surface) 75%, transparent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.my-advice-banner__toggle:hover { border-color: var(--accent); background: var(--surface); }
+.my-advice-banner__text,
+.my-advice-banner__source { margin: 0; color: var(--text-secondary, var(--muted)); font-size: 13px; line-height: 1.7; }
+.my-advice-banner__details { padding-top: 5px; }
+.my-advice-banner__source { margin-top: 6px; color: var(--text-tertiary, var(--muted)); font-size: 12px; }
+.advice-expand-enter-active,
+.advice-expand-leave-active { overflow: hidden; transition: opacity .2s ease, max-height .24s ease, transform .24s ease; }
+.advice-expand-enter-from,
+.advice-expand-leave-to { max-height: 0; opacity: 0; transform: translateY(-5px); }
+.advice-expand-enter-to,
+.advice-expand-leave-from { max-height: 180px; opacity: 1; transform: translateY(0); }
+
+@media (max-width: 640px) {
+  .my-advice-banner { padding: 12px; }
+  .my-advice-banner__head { gap: 7px; }
+  .my-advice-banner__title { font-size: 13px; line-height: 22px; }
+  .my-advice-banner__text, .my-advice-banner__source { font-size: 12px; line-height: 1.65; }
+}
+
 .my-panel__login-hint svg {
   flex-shrink: 0;
   color: var(--accent);
@@ -5663,6 +5792,20 @@ button.is-dropped:hover {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.my-form-advice {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.my-form-advice a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.my-form-advice a:hover { text-decoration: underline; }
 
 /* ── Select wrapper ── */
 

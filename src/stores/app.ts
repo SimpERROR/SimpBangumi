@@ -9,6 +9,7 @@ export const NSFW_FIRST_NOTICE_SEEN_KEY = "bangumi.live2d.nsfwFirstNoticeSeen";
 export const RATING_ANOMALY_DETECTION_KEY = "bangumi.experimental.ratingAnomalyDetection";
 export const COLLECTION_DISTRIBUTION_ANALYSIS_KEY = "bangumi.experimental.collectionDistributionAnalysis";
 export const OVERALL_WORK_OPINION_KEY = "bangumi.experimental.overallWorkOpinion";
+export const SHOW_USAGE_ADVICE_KEY = "bangumi.display.showUsageAdvice";
 
 const theme = ref<ThemeMode>("light");
 const loading = ref(false);
@@ -58,6 +59,13 @@ const collectionSaveSuccessCounter = ref(0);
 
 // 更新选项
 const checkUpdateOnStartup = ref(true);
+
+// SimpBangumi 使用建议、数据提示及社区行为提示
+const showUsageAdvice = ref(loadBool(SHOW_USAGE_ADVICE_KEY, true));
+function setShowUsageAdvice(value: boolean) {
+  showUsageAdvice.value = value;
+  saveBool(SHOW_USAGE_ADVICE_KEY, value);
+}
 
 // 实验性功能
 const ratingAnomalyDetectionEnabled = ref(loadBool(RATING_ANOMALY_DETECTION_KEY, false));
@@ -251,6 +259,8 @@ export function useAppStore() {
     live2dAutoSpeakMinInterval,
     live2dAutoSpeakMaxInterval,
     checkUpdateOnStartup,
+    showUsageAdvice,
+    setShowUsageAdvice,
     ratingAnomalyDetectionEnabled,
     setRatingAnomalyDetectionEnabled,
     collectionDistributionAnalysisEnabled,

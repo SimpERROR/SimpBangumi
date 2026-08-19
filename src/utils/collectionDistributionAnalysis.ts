@@ -173,7 +173,10 @@ export function analyzeCollectionDistribution(
     : decided >= 50 && counts.dropped >= 20 && dropoutInterval.lower >= 0.22
       && (broadcastPhase !== "airing"
         || droppedAmongStartedInterval.lower >= 0.07
-        || (dropoutRate >= 0.3 && counts.dropped >= 50));
+        // During airing, the decided subset is self-selected: most users are still
+        // watching, so a high decided-only rate is not enough to call broad churn.
+        || (dropoutRate >= 0.3 && counts.dropped >= 50 && droppedAmongStartedInterval.lower >= 0.02)
+        || (dropoutRate >= 0.35 && counts.dropped >= 80 && droppedAmongStartedInterval.lower >= 0.015));
   const outcomeSplit = broadcastPhase !== "not-aired" && broadcastPhase !== "airing"
     && decided >= 80 && counts.collect >= 30 && counts.dropped >= 25
     && dropoutInterval.lower >= 0.2 && dropoutInterval.upper <= 0.6;

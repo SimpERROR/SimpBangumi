@@ -302,6 +302,23 @@ const autoSpeakRangeStyle = computed(() => {
       </div>
     </section>
 
+    <!-- ═══ 提示与建议 ═══ -->
+    <section class="settings-card">
+      <h3 class="settings-card__title">提示与建议</h3>
+      <p class="settings-card__desc">显示来自 SimpBangumi 的使用建议、数据提示及社区行为提示。</p>
+      <label class="toggle-row">
+        <span class="toggle-row__label">显示提示与建议</span>
+        <input
+          :checked="appStore.showUsageAdvice.value"
+          class="toggle-row__input"
+          type="checkbox"
+          role="switch"
+          @change="appStore.setShowUsageAdvice(($event.target as HTMLInputElement).checked)"
+        />
+        <span class="toggle-row__track" />
+      </label>
+    </section>
+
     <!-- ═══ 链接行为 ═══ -->
     <section class="settings-card">
       <h3 class="settings-card__title">链接行为</h3>

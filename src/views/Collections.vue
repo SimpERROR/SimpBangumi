@@ -767,6 +767,34 @@ const collectionBroadcastPhase = computed<CollectionBroadcastPhase | null>(() =>
   return null;
 });
 
+const showPreReleaseRatingAdvice = computed(() =>
+  detailPage.value === "subject"
+  && detail.value?.type === 2
+  && collectionBroadcastPhase.value === "not-aired"
+  && appStore.showUsageAdvice.value,
+);
+const PRE_RELEASE_ADVICE_EXPANDED_KEY = "bangumi.display.preReleaseAdviceExpanded";
+const preReleaseAdviceExpanded = ref(localStorage.getItem(PRE_RELEASE_ADVICE_EXPANDED_KEY) !== "0");
+function togglePreReleaseAdvice() {
+  preReleaseAdviceExpanded.value = !preReleaseAdviceExpanded.value;
+  localStorage.setItem(PRE_RELEASE_ADVICE_EXPANDED_KEY, preReleaseAdviceExpanded.value ? "1" : "0");
+}
+
+// Estimate the current broadcast position from the matched airing date. This is deliberately
+// coarse (weekly cadence) and is used to qualify retention signals, not to display an exact
+// episode schedule.
+const broadcastProgress = computed(() => {
+  const data = TenraiMatch.value?.data;
+  const totalEpisodes = Number(data?.episodes ?? detail.value?.eps ?? 0);
+  const airedFrom = data?.aired?.from ? Date.parse(data.aired.from) : NaN;
+  if (collectionBroadcastPhase.value !== "airing" || !Number.isFinite(airedFrom) || totalEpisodes <= 0) {
+    return { currentEpisode: null, totalEpisodes: totalEpisodes > 0 ? totalEpisodes : null, ratio: null };
+  }
+  const elapsedWeeks = Math.max(0, (Date.now() - airedFrom) / (7 * 24 * 60 * 60 * 1000));
+  const currentEpisode = Math.min(totalEpisodes, Math.max(1, Math.floor(elapsedWeeks) + 1));
+  return { currentEpisode, totalEpisodes, ratio: currentEpisode / totalEpisodes };
+});
+
 const collectionDistributionAnalysis = computed(() => analyzeCollectionDistribution(
   detail.value?.collection,
   { broadcastPhase: collectionBroadcastPhase.value },
@@ -775,6 +803,7 @@ const collectionDistributionAnalysis = computed(() => analyzeCollectionDistribut
 const overallOpinionOpen = ref(false);
 const overallOpinionVariant = ref(0);
 const overallOpinionOrbPosition = ref({ x: 0, y: 0 });
+const overallOpinionFaceOffset = ref({ x: 0, y: 0 });
 const overallOpinionOrbDrag = ref<{
   pointerId: number;
   startX: number;
@@ -795,6 +824,8 @@ function overallOpinionOrbStyle() {
   return {
     '--overall-opinion-x': `${x}px`,
     '--overall-opinion-y': `${y}px`,
+    '--overall-opinion-face-x': `${overallOpinionFaceOffset.value.x}px`,
+    '--overall-opinion-face-y': `${overallOpinionFaceOffset.value.y}px`,
   };
 }
 
@@ -820,6 +851,11 @@ function moveOverallOpinionOrb(event: PointerEvent) {
   const deltaY = event.clientY - drag.startY;
   if (!drag.moved && Math.hypot(deltaX, deltaY) < 3) return;
   drag.moved = true;
+  const distance = Math.hypot(deltaX, deltaY) || 1;
+  overallOpinionFaceOffset.value = {
+    x: Math.round(deltaX / distance * 3),
+    y: Math.round(deltaY / distance * 3),
+  };
   const margin = 8;
   const minDeltaX = margin - drag.startRect.left;
   const maxDeltaX = window.innerWidth - margin - drag.startRect.right;
@@ -839,6 +875,7 @@ function endOverallOpinionOrbDrag(event: PointerEvent) {
   target?.releasePointerCapture?.(event.pointerId);
   suppressOverallOpinionClick.value = drag.moved;
   overallOpinionOrbDrag.value = null;
+  overallOpinionFaceOffset.value = { x: 0, y: 0 };
 }
 
 function handleOverallOpinionOrbClick() {
@@ -884,42 +921,77 @@ const generatedOverallOpinionAnalysis = computed(() => {
     ? Number(subject.collection.wish ?? 0) + Number(subject.collection.collect ?? 0)
       + Number(subject.collection.doing ?? 0) + Number(subject.collection.on_hold ?? 0) + Number(subject.collection.dropped ?? 0)
     : 0;
-  const choose = (items: string[], offset: number) => items[(overallOpinionVariant.value + offset) % items.length];
-  // This is a calibrated data value, not a personalised recommendation. Ordinary works retain a
-  // stable linear scale, while the elite bonus only activates when a high score and a top rank
-  // agree. That keeps 100% reachable without lifting every well-known work into SSS territory.
-  const recommendationPercent = (() => {
-    const scoreSignal = score > 0 ? Math.min(1, Math.max(0, score / 10)) : 0.5;
-    const rankSignal = rank > 0 ? Math.min(1, Math.max(0, 1 - (rank - 1) / 10000)) : 0.5;
-    const sampleSignal = Math.min(1, Math.log10(Math.max(total, 1)) / 4);
-    const riskPenalty = (rating.status === "watch" ? 0.10 : 0)
-      + (collection.status === "watch" ? 0.10 : 0)
-      + (rating.status === "insufficient" || collection.status === "insufficient" ? 0.08 : 0);
-    const phasePenalty = collectionBroadcastPhase.value === "not-aired" ? 0.12 : 0;
-    const base = (scoreSignal * 0.55 + rankSignal * 0.20 + sampleSignal * 0.25) * 101;
-    const eliteScoreSignal = Math.min(1, Math.max(0, (score - 8.2) / 0.5));
-    const eliteRankSignal = rank > 0 ? Math.min(1, Math.max(0, 1 - (rank - 1) / 1500)) : 0;
-    // Calibrated against the observed EVA record (8.6 / rank 23 / 34k votes ~= 100.6%).
-    // The hard cap remains reserved for near-perfect score/rank combinations.
-    const eliteBonus = eliteScoreSignal * eliteRankSignal * 9.4;
-    const penalties = (riskPenalty + phasePenalty) * 101;
-    const raw = Math.max(0, base + eliteBonus - penalties);
-    // Avoid making every strong title look like a perfect score once it crosses 100%.
-    return raw <= 100 ? raw : Math.min(101, 100 + (1 - Math.exp(-(raw - 100) * 1.5)));
-  })();
   const isPreRelease = collectionBroadcastPhase.value === "not-aired";
   const ratingCounts = subject?.rating?.count ?? {};
   const highPreReleaseVotes = [8, 9, 10].reduce((sum, value) => sum + Number(ratingCounts[String(value)] ?? 0), 0);
   const lowPreReleaseVotes = [1, 2, 3].reduce((sum, value) => sum + Number(ratingCounts[String(value)] ?? 0), 0);
   const highPreReleaseShare = total > 0 ? highPreReleaseVotes / total : 0;
   const lowPreReleaseShare = total > 0 ? lowPreReleaseVotes / total : 0;
+  const preReleaseWishCount = Number(subject?.collection.wish ?? 0);
+  const hasPreReleaseSample = total >= 100 || preReleaseWishCount >= 100;
+  const choose = (items: string[], offset: number) => items[(overallOpinionVariant.value + offset) % items.length];
+  // This is a calibrated data value, not a personalised recommendation. Ordinary works retain a
+  // stable linear scale, while the elite bonus only activates when a high score and a top rank
+  // agree. That keeps 100% reachable without lifting every well-known work into SSS territory.
+  const recommendationPercent = (() => {
+    if (isPreRelease) {
+      // Before release, rank and viewing outcomes do not describe the finished work. Treat wish
+      // volume as anticipation, allow early ratings only a small influence, and reduce that
+      // influence further when opposing extreme votes suggest expectation-driven score battles.
+      const wishShare = collectionTotal > 0 ? preReleaseWishCount / collectionTotal : 0;
+      const anticipationSample = Math.min(1, Math.log10(preReleaseWishCount + 1) / 4);
+      const anticipationSignal = anticipationSample * (0.55 + wishShare * 0.45);
+      const earlyRatingConfidence = total > 0
+        ? Math.min(0.35, Math.log10(total + 1) / 4 * 0.35)
+        : 0;
+      const earlyScoreDirection = score > 0 ? Math.max(-1, Math.min(1, (score / 10 - 0.5) * 2)) : 0;
+      const opposingExtremes = Math.min(1, Math.min(highPreReleaseShare, lowPreReleaseShare) * 4);
+      const earlyRatingLift = earlyScoreDirection * 7 * earlyRatingConfidence * (1 - opposingExtremes * 0.75);
+      const raw = 50 + anticipationSignal * 13 + earlyRatingLift;
+      // An untested work cannot reach the top recommendation bands on anticipation alone.
+      return Math.max(42, Math.min(69.9, raw));
+    }
+    // Insufficient samples should communicate uncertainty, not manufacture a
+    // negative recommendation. Start at a neutral 50% and only allow a small
+    // evidence-weighted drift when a score/rank or collection signal exists.
+    const ratingConfidence = total > 0 ? Math.min(1, Math.log10(total + 1) / Math.log10(101)) : 0;
+    const collectionConfidence = collectionTotal > 0 ? Math.min(1, Math.log10(collectionTotal + 1) / Math.log10(101)) : 0;
+    if (rating.status === "insufficient" || collection.status === "insufficient") {
+      const scoreSignal = score > 0 ? Math.min(1, Math.max(0, score / 10)) : null;
+      const rankSignal = rank > 0 ? Math.min(1, Math.max(0, 1 - (rank - 1) / 10000)) : null;
+      const availableSignals = [scoreSignal, rankSignal].filter((signal): signal is number => signal !== null);
+      const ratingDirection = availableSignals.length
+        ? availableSignals.reduce((sum, signal) => sum + signal, 0) / availableSignals.length - 0.5
+        : 0;
+      const collectionDirection = collection.status === "watch" ? 0.08 : 0;
+      const confidence = Math.max(ratingConfidence, collectionConfidence * 0.65);
+      return Math.max(0, Math.min(100, 50 + (ratingDirection + collectionDirection) * 100 * confidence * 0.6));
+    }
+    const scoreSignal = score > 0 ? Math.min(1, Math.max(0, score / 10)) : 0.5;
+    const rankSignal = rank > 0 ? Math.min(1, Math.max(0, 1 - (rank - 1) / 10000)) : 0.5;
+    const sampleSignal = Math.min(1, Math.log10(Math.max(total, 1)) / 4);
+    const riskPenalty = (rating.status === "watch" ? 0.10 : 0)
+      + (collection.status === "watch" ? 0.10 : 0);
+    const base = (scoreSignal * 0.55 + rankSignal * 0.20 + sampleSignal * 0.25) * 101;
+    const eliteScoreSignal = Math.min(1, Math.max(0, (score - 8.2) / 0.5));
+    const eliteRankSignal = rank > 0 ? Math.min(1, Math.max(0, 1 - (rank - 1) / 1500)) : 0;
+    // Calibrated against the observed EVA record (8.6 / rank 23 / 34k votes ~= 100.6%).
+    // The hard cap remains reserved for near-perfect score/rank combinations.
+    const eliteBonus = eliteScoreSignal * eliteRankSignal * 9.4;
+    const penalties = riskPenalty * 101;
+    const raw = Math.max(0, base + eliteBonus - penalties);
+    // Avoid making every strong title look like a perfect score once it crosses 100%.
+    return raw <= 100 ? raw : Math.min(101, 100 + (1 - Math.exp(-(raw - 100) * 1.5)));
+  })();
   const rankTone = rank > 0
     ? rank <= 1000 ? "排名非常靠前"
       : rank <= 3000 ? "排名相对靠前"
         : rank <= 6000 ? "排名处于中段"
           : "排名相对靠后"
     : "排名信息暂缺";
-  const scoreTone = rank > 0
+  const scoreTone = total <= 0 && score <= 0
+    ? "评分暂缺"
+    : rank > 0
     ? rank <= 1000 ? "口碑很强"
       : rank <= 3000 ? "口碑稳健"
         : rank <= 6000 ? "评价中等"
@@ -952,32 +1024,52 @@ const generatedOverallOpinionAnalysis = computed(() => {
       "如果题材感兴趣，可以保留想看；是否投入时间最好等首批真实观众反馈出现后再决定。",
       "不必跟随高分建立过高预期，也不必因少量低分提前劝退，开播后的评分变化才更有信息量。",
       "可以把当前数据当作关注度和阵营情绪指标，但不要把它解释成质量认证。",
+      "如果只是想了解热度，可以先加入想看；真正安排观看时间时，建议等开播后的前几集反馈。",
+      "开播前不必急着做出取舍，先记录自己关注的制作信息，等实际内容出现后再重新评估。",
+      "对提前评分保持低权重看待即可，首播后的评分人数和评论内容会更值得参考。",
+      "可以先把它当作观察对象，等评分从预期投票转为观后投票后再决定是否追看。",
     ];
     const preReleaseAdvice = choose(preReleaseAdvicePool, 31);
+    const preReleaseSummary = total > 0
+      ? choose(preReleaseSummaryPool, 19)
+      : `作品尚未开播，目前没有可读的提前评分；已有 ${preReleaseWishCount} 人标记想看。开播前参考值只描述期待热度，不用于推断成片质量。`;
       return {
-        status: "watch" as const,
+        status: hasPreReleaseSample ? "watch" as const : "insufficient" as const,
         recommendationPercent,
         title: `${subject?.name_cn || subject?.name || "这部作品"}：${choose(titlePool, 11)}`,
-      summary: `${choose(preReleaseSummaryPool, 19)} ${preReleaseAdvice}`,
-      detail: `尚未开播 · ${score.toFixed(1)} / 10 · 排名 #${rank || "-"} · ${total} 人评分 · 高分段 ${highPreReleaseVotes} 票 · 低分段 ${lowPreReleaseVotes} 票`,
+      summary: `${preReleaseSummary} ${preReleaseAdvice}`,
+      detail: `尚未开播 · 想看 ${preReleaseWishCount} 人 · 提前评分 ${total} 人 · 高分段 ${highPreReleaseVotes} 票 · 低分段 ${lowPreReleaseVotes} 票 · 当前排名不参与计算`,
       sections: [
-        { label: "评分印象", text: `8–10 分占 ${highShareLabel}，显示出明显的提前期待；但作品尚无正式观后样本，不能据此判断实际质量。` },
-        { label: "反向压分", text: `1–3 分占 ${lowShareLabel}。其中可能有真实负面预期，也可能有人试图抵消提前高分；仅凭分布无法确认具体动机。` },
-        { label: "排名怎么读", text: `当前排名 #${rank || "-"} 会随少量新增评分快速波动，也无法与已播作品的成熟口碑公平比较，暂不用于“口碑强弱”判断。` },
+        { label: "评分印象", text: total > 0 ? `8–10 分占 ${highShareLabel}，显示出明显的提前期待；但作品尚无正式观后样本，不能据此判断实际质量。` : "目前尚无提前评分，评分侧不提供正面或负面信号。" },
+        { label: "反向压分", text: total > 0 ? `1–3 分占 ${lowShareLabel}。其中可能有真实负面预期，也可能有人试图抵消提前高分；仅凭分布无法确认具体动机。` : "尚无提前评分，因此也不存在可分析的高低分对冲现象。" },
+        { label: "排名怎么读", text: rank > 0 ? `当前排名 #${rank} 会随少量新增评分快速波动，也无法与已播作品的成熟口碑公平比较，因此不参与开播前参考值计算。` : "排名信息暂缺；即使后续出现开播前排名，也不会参与开播前参考值计算。" },
         { label: "观看建议", text: `${preReleaseAdvice} 开播状态来自配信匹配结果，若匹配有误，应以作品实际播出信息为准。` },
       ],
     };
   }
   if (rating.status === "insufficient" || collection.status === "insufficient") {
+    const insufficientAdvicePool = [
+      "建议先用一两集确认题材和节奏是否合口味，暂时不要根据小样本下结论。",
+      "可以先收藏观察，等评分和收藏样本增加后再重新查看综合判断。",
+      "当前数据更适合辅助筛选，是否观看应优先取决于你的兴趣和可投入时间。",
+      "如果作品本身很吸引你，可以低成本试播；若没有明确兴趣，等待更多反馈会更稳妥。",
+      "样本量有限时，个人体验比排行榜和均分更有信息量，建议边看边决定。",
+      "不必因为暂无评分直接劝退，也不必因少数高分建立过高预期。",
+    ];
+    const insufficientAdvice = choose(insufficientAdvicePool, 37);
+    const insufficientSummary = total <= 0 && score <= 0
+      ? `评分样本暂缺，当前不能判断稳定口碑；${rank > 0 ? `排名 #${rank} 也仅供参考` : "排名信息暂缺"}。`
+      : `${scoreTone}（${score > 0 ? score.toFixed(1) : "暂无"} 分，${rank > 0 ? `排名 #${rank}` : "排名暂缺"}），但目前不足以把评分和用户去留连成可靠结论。`;
       return {
         status: "insufficient" as const,
         recommendationPercent,
         title: `${subject?.name_cn || subject?.name || "这部作品"}：样本还在积累`,
-      summary: `${scoreTone}（${score > 0 ? score.toFixed(1) : "暂无"} 分，${rank > 0 ? `排名 #${rank}` : "排名暂缺"}），但目前不足以把评分和用户去留连成可靠结论。`,
+      summary: insufficientSummary,
       detail: `已有 ${total || 0} 份评分、${collectionTotal} 份收藏状态；${rankTone}；${fallbackAdvice}`,
       sections: [
-        { label: "当前印象", text: `评分侧目前只能确认${scoreTone}，还不能判断这是稳定口碑还是早期样本造成的印象。` },
-        { label: "怎么读", text: `评分监测需要约 ${rating.sampleSize < 100 ? 100 : rating.sampleSize} 份以上样本，收藏监测需要约 ${collection.sampleSize < 100 ? 100 : collection.sampleSize} 份状态记录。${fallbackAdvice}` },
+        { label: "当前印象", text: total <= 0 && score <= 0 ? "评分侧尚未形成可读样本，不能把暂无评分解释为负面口碑。" : `评分侧目前只能确认${scoreTone}，还不能判断这是稳定口碑还是早期样本造成的印象。` },
+        { label: "怎么读", text: `评分监测需要约 ${rating.sampleSize < 100 ? 100 : rating.sampleSize} 份以上样本，收藏监测需要约 ${collection.sampleSize < 100 ? 100 : collection.sampleSize} 份状态记录。${insufficientAdvice}` },
+        { label: "观看建议", text: insufficientAdvice },
       ],
     };
   }
@@ -988,27 +1080,51 @@ const generatedOverallOpinionAnalysis = computed(() => {
   const decidedCount = Number(collectionCounts?.collect ?? 0) + Number(collectionCounts?.dropped ?? 0);
   const dropoutRate = decidedCount > 0 ? Number(collectionCounts?.dropped ?? 0) / decidedCount : 0;
   const droppedAmongStartedRate = startedCount > 0 ? Number(collectionCounts?.dropped ?? 0) / startedCount : 0;
-  const strongDropoutRisk = decidedCount >= 50 && Number(collectionCounts?.dropped ?? 0) >= 20
-    && (dropoutRate >= 0.3 || droppedAmongStartedRate >= 0.12);
-  const selectiveRisk = strongDropoutRisk && (rating.skewness <= -1 || rating.standardDeviation >= 1.9);
+  const airingProgressRatio = broadcastProgress.value.ratio;
+  const airingProgressText = broadcastProgress.value.currentEpisode && broadcastProgress.value.totalEpisodes
+    ? `约播至第 ${broadcastProgress.value.currentEpisode}/${broadcastProgress.value.totalEpisodes} 集`
+    : "当前集数暂无法估算";
+  const airingExitShareThreshold = airingProgressRatio !== null && airingProgressRatio >= 0.75
+    ? 0.01
+    : airingProgressRatio !== null && airingProgressRatio >= 0.4 ? 0.012 : 0.015;
+  // 15-22% deserves a caution, but does not support a high-dropout claim.
+  const moderateDropoutRisk = decidedCount >= 80 && Number(collectionCounts?.dropped ?? 0) >= 20
+    && dropoutRate >= 0.15
+    && (collectionBroadcastPhase.value !== "airing" || droppedAmongStartedRate >= 0.02);
+  const hasCollectionDropoutSignal = collection.signals.some((signal) => signal.kind === "dropout");
+  const airingEarlyExitRisk = collectionBroadcastPhase.value === "airing"
+    && ((decidedCount >= 80 && Number(collectionCounts?.dropped ?? 0) >= 30
+      && dropoutRate >= 0.3 && droppedAmongStartedRate >= airingExitShareThreshold)
+      || hasCollectionDropoutSignal);
+  const strongDropoutRisk = collection.signals.some((signal) => signal.kind === "outcome-split")
+    || (hasCollectionDropoutSignal && (collectionBroadcastPhase.value !== "airing" || droppedAmongStartedRate >= 0.03));
+  const selectiveRisk = strongDropoutRisk && (rating.signals.some((signal) => signal.kind === "polarization" || signal.kind === "extreme-skew") || rating.standardDeviation >= 1.9);
+  const skewRiskText = rating.skewness <= -0.35
+    ? `偏度 ${rating.skewness.toFixed(2)} 显示低分长尾明显`
+    : rating.skewness >= 0.75
+      ? `偏度 ${rating.skewness.toFixed(2)} 显示高分长尾明显，不能据此推断普遍认可`
+      : `偏度 ${rating.skewness.toFixed(2)} 未显示明显的单侧长尾`;
   const topicHints = [...(subject?.tags ?? [])]
     .sort((first, second) => second.count - first.count)
     .slice(0, 4)
     .map((tag) => tag.name)
     .filter(Boolean);
   const topicHintText = topicHints.length ? `可优先核对“${topicHints.join("、")}”等标签是否符合你的接受范围。` : "可优先核对题材、表达尺度和叙事风格是否符合自己的接受范围。";
-  const ratingCase = selectiveRisk ? "selective" : rating.signals.length ? "disputed" : rank > 0 ? rank <= 3000 ? "strong" : rank > 6000 ? "weak" : "steady" : score < 6 ? "weak" : score >= 8 ? "strong" : "steady";
+  const hasIsolatedSpike = rating.signals.some((signal) => signal.kind === "isolated-spike");
+  const ratingCase = selectiveRisk ? "selective" : hasIsolatedSpike ? "spike" : rating.signals.length ? "disputed" : rank > 0 ? rank <= 3000 ? "strong" : rank > 6000 ? "weak" : "steady" : score < 6 ? "weak" : score >= 8 ? "strong" : "steady";
   const ratingPools: Record<string, string[]> = {
     weak: [`${scoreTone}（${scoreText}）。分布本身没有明显异常，说明偏低的评价来自较普遍的观感，而不是少数极端票拉低了均分。`, `目前评分只有 ${score.toFixed(1)} 分。票型相对自然，因此这个低分更像是观众整体认可度不足，而非异常评分造成的假象。`, `从 ${total} 份评分来看，作品的口碑基础偏弱。高低分没有异常聚集，现有均分具有一定参考价值。`, `评分端给出的信号并不乐观：均分偏低，同时分布平稳。这意味着问题更可能来自普遍体验，而不是某一批极端评价。`, `在 Bangumi 的整体排名中，这个位置说明作品确实落后于多数热门条目；好在评分结构正常，负面反馈具有一定普遍性。`, `它不是被少数低分拖累的作品，而是整体评分都没有形成足够的认可度。排名和分布一起看，低口碑结论比较稳固。`],
     strong: [`${scoreTone}（${scoreText}）。${rankTone}，评分围绕较高区间稳定聚集，当前认可度既高，也没有明显异常票型。`, `这部作品取得了 ${score.toFixed(1)} 分并排在前列，且分布较自然。高评价并非只靠少量满分票支撑，口碑基础相对扎实。`, `${total} 位评分者给出了较强的正面反馈，${rankTone}。现阶段看，分数、排名与评分结构能够互相印证。`, `排名已经进入 Bangumi 的前段，评分也没有明显失真迹象。对喜欢相关题材的观众来说，这是相对可靠的正向信号。`, `它同时拥有较高分数和靠前排名，说明认可度不只停留在小圈层。整体口碑有一定广度，也有稳定性。`],
     steady: [`${scoreTone}（${scoreText}）。${rankTone}，评分主要围绕主流意见展开，没有明显的极端分化或单侧异常。`, `当前均分为 ${score.toFixed(1)}，${rankTone}，票型也较为自然。它未必让所有人惊艳，但在 Bangumi 的整体作品中仍有稳定认可度。`, `从评分侧看，作品获得了相对稳定的反馈；分数和排名都没有显示口碑被少数极端评价显著扭曲。`, `这是一种“没有特别失望，也不一定人人惊艳”的口碑。排名处于相对正常的位置，评分结构也支持这种中性的判断。`, `分数与排名给出的信息比较一致：作品有明确受众，但还没有形成压倒性的共识。整体评价稳，不必过度拔高或贬低。`],
     disputed: [`${scoreTone}（${scoreText}），但评分结构并不平静。总分掩盖了观众之间的明显分歧，需要结合具体偏好理解。`, `平均分只能说明一部分情况：评分分布触发了异常或争议信号，不同观众对作品的接受度可能差异很大。`, `这部作品的均分具有迷惑性。比起分数高低，评分者为何形成分化更值得关注。`, `评分端存在值得留意的结构性信号，单看 ${score.toFixed(1)} 分容易忽略作品较强的受众筛选效应。`, `排名和均分未必能代表所有人的体验，当前数据更像是“有人很喜欢，也有人明确不买账”。`, `它的主要特征不是高或低，而是评价不够统一。选择观看前，最好先确认争议点是否触及自己的偏好。`],
-    selective: [`${scoreText} 看起来不差，但低分长尾与高弃坑率同时出现，说明作品具有明显的受众筛选效应。`, `均分和热度掩盖了一项更重要的风险：一部分观众不仅给出极低评价，也直接停止了观看。`, `这部作品可能很容易吸引人点开，却未必容易留住人；偏度 ${rating.skewness.toFixed(2)} 与 ${(dropoutRate * 100).toFixed(1)}% 的明确结局弃坑率相互印证。`, `排名不能完整描述这部作品。低分离群和用户退出同时存在，更像是“爱者能接受、厌者迅速离场”的强筛选型作品。`, `表面评分尚可，但负面反馈并非只停留在打分层面，它同时反映在真实的弃坑行为中。`],
+    spike: [`${scoreText} 的整体分数偏正面，但评分集中在某一个具体分数档位，平均分需要结合票型解读。`, `当前评分为 ${score.toFixed(1)} 分，主要票数集中在单一档位；这更像是集中式打分习惯，不能直接等同于两极口碑。`, `评分分布出现单点尖峰，主流观感仍偏向 ${score >= 7 ? "认可" : "保留"}，但少量邻近档位不足使均分的细节信息变少。`],
+    selective: [`${scoreText} 看起来不差，但评分分化与较高弃坑率同时出现，说明作品具有明显的受众筛选效应。`, `均分和热度掩盖了一项更重要的风险：一部分观众给出强烈负面评价，也直接停止了观看。`, `这部作品可能很容易吸引人点开，却未必容易留住人；${skewRiskText} 与 ${(dropoutRate * 100).toFixed(1)}% 的明确结局弃坑率相互印证。`, `排名不能完整描述这部作品。评分分化和用户退出同时存在，更像是“爱者能接受、厌者迅速离场”的强筛选型作品。`, `表面评分尚可，但负面反馈并非只停留在打分层面，它同时反映在真实的弃坑行为中。`],
   };
   const kinds = new Set(collection.signals.map((signal) => signal.kind));
-  const collectionCase = strongDropoutRisk ? "dropout" : kinds.has("dropout") ? "dropout" : kinds.has("on-hold") ? "onhold" : kinds.has("outcome-split") ? "split" : kinds.has("wish-backlog") ? "backlog" : kinds.has("active-surge") ? "active" : collection.profile.label.includes("完结") || collection.profile.label.includes("沉淀") ? "completed" : "neutral";
+  const collectionCase = strongDropoutRisk || moderateDropoutRisk ? "dropout" : airingEarlyExitRisk ? "early-exit" : kinds.has("dropout") ? "dropout" : kinds.has("on-hold") ? "onhold" : kinds.has("outcome-split") ? "split" : kinds.has("wish-backlog") ? "backlog" : kinds.has("active-surge") ? "active" : collection.profile.label.includes("完结") || collection.profile.label.includes("沉淀") ? "completed" : "neutral";
   const collectionPools: Record<string, string[]> = {
     active: ["收藏侧呈现追看热潮，不少用户仍在持续推进，作品目前具备较强的即时吸引力。", "在看用户占比较高，观众仍集中于观看过程；热度正在兑现，但最终完成表现尚未定型。", "收藏轨迹显示活跃追看，这通常意味着前中期具备留住观众的动力，不过暂时不能把追看直接等同于完结口碑。", "作品当前的主要反馈来自正在观看的人群，说明它能把兴趣转化为行动。后续完成率仍需要更多数据验证。", "从收藏状态看，观众没有停留在观望阶段，而是有相当一部分已经开始跟进。它的即时吸引力值得肯定。"],
+    "early-exit": ["作品仍在放送，多数用户尚在观看，但已经出现一批明确退出者，可能存在前期受众门槛。", "追看仍是主流，同时已有可见的早期弃坑群体；这更适合视为门槛信号，而不是最终留存结论。", "当前观看结构尚未定型，不过开始后较快离开的用户已形成一定规模，前几集的适配度值得留意。"],
     dropout: ["明确结束观看的用户中，抛弃比例偏高，作品在实际体验中流失了不少观众。", "收藏数据暴露出较明显的退出倾向，部分用户开始后没有坚持到最后。", "相比想看或在看人数，更需要注意较高的弃坑表现；节奏、完成度或受众门槛可能影响了留存。", "收藏轨迹对作品的长期留存并不乐观，感兴趣的人不少，但真正坚持下来的人相对有限。", "用户从开始观看到明确放弃之间出现了明显损耗，这比单纯的低评分更能提示实际体验风险。"],
     onhold: ["搁置比例偏高，说明不少用户没有彻底放弃，但作品也不足以推动他们继续观看。", "收藏状态里积累了较多搁置用户，观看动力可能在中途减弱。", "用户更常选择暂停而非直接抛弃，这通常意味着作品并非完全不受认可，但持续吸引力有限。"],
     split: ["看完与抛弃两种结局同时突出，作品对不同受众产生了截然不同的体验。", "收藏结局明显分流：一部分人完整看完，另一部分人则中途退出。", "用户去向呈现两极结果，能否接受作品的表达方式可能比平均分更重要。"],
@@ -1034,11 +1150,15 @@ const generatedOverallOpinionAnalysis = computed(() => {
       "边播边看的氛围是它眼下的优势之一；若你更看重结构完整性，可以把决定留到完结之后。",
       "不用急着在‘追’和‘不追’之间二选一，先体验开篇，再根据自己的期待调整观看节奏。",
       "热度可以作为开始观看的理由，却不该成为坚持看完的压力；不合口味时及时停下即可。",
+      "如果喜欢边看边验证，可以把每周更新当作阶段性检查点，持续确认作品是否仍然符合预期。",
+      "追看人数提供了开始的理由，但每集结束后的真实感受才是决定是否继续的主要依据。",
+      "适合把它放进短周期观看计划，留出调整空间，避免单凭当前热度安排过多时间。",
     ],
-    dropout: ["建议先试播或试读一小段，确认能接受节奏与表达后再投入完整时间。", "不妨降低预期并设置一个试看片段；如果前期已经缺乏吸引力，继续投入的回报可能有限。", "更适合谨慎尝试，而不是仅凭题材或宣传直接开始长线观看。", "如果时间成本较高，建议把它放在候选列表，先观察后续口碑是否改善。"],
-    onhold: ["建议优先确认作品中段的节奏反馈，避免开始后长期搁置。", "可以分阶段体验；若前几集仍缺乏推进动力，就不必勉强继续。", "适合有耐心、能接受慢热展开的观众，时间有限时可暂缓。", "不妨给它设一个明确的继续观看节点，避免因为‘以后再看’而长期占用收藏位置。"],
-    split: ["建议先确认自己是否属于它的目标受众，再用几集内容验证，而不是依赖均分决策。", "这类作品更吃个人偏好，试播的参考价值会高于排行榜位置。", "可以优先查看题材、叙事风格和负面反馈是否触及自己的雷区。", "如果你对争议点不敏感，它可能值得尝试；反之则应先把风险点看清楚。"],
-    backlog: ["可以继续观望，等更多用户实际观看后再判断也不迟。", "若没有强烈题材兴趣，不妨等待收藏热度转化成更明确的完成反馈。", "现阶段更适合放在候选列表，而不是仅因想看人数多就立即投入。", "想看人数说明关注度不低，但还缺少体验后的反馈，等一轮数据沉淀会更稳妥。"],
+    "early-exit": ["建议先看两到三集，重点确认节奏、表达方式和角色塑造是否符合偏好。", "可以尝试，但适合设置一个前期观察点；若很快失去观看动力，不必因追看热度勉强继续。", "放送期数据尚未定型，先用少量时间验证自己能否跨过作品的前期门槛。", "优先观察前几集是否能持续提供推进感，若需要反复催促自己观看就可以及时止损。", "把早期退出信号当作提醒而非定论，实际试播后的个人感受应当放在首位。", "若你能接受慢热或边播边调整，可以继续跟几集；否则等完结反馈更省时间。"],
+    dropout: ["建议先试播或试读一小段，确认能接受节奏与表达后再投入完整时间。", "不妨降低预期并设置一个试看片段；如果前期已经缺乏吸引力，继续投入的回报可能有限。", "更适合谨慎尝试，而不是仅凭题材或宣传直接开始长线观看。", "如果时间成本较高，建议把它放在候选列表，先观察后续口碑是否改善。", "可以先查看弃坑反馈集中出现的阶段，确认问题是否正好触及你的敏感点。", "若决定尝试，给自己设一个明确的退出标准，不要因为已经投入时间而被迫看完。", "对这类高流失作品，短篇幅试播通常比一次性投入整季更合适。"],
+    onhold: ["建议优先确认作品中段的节奏反馈，避免开始后长期搁置。", "可以分阶段体验；若前几集仍缺乏推进动力，就不必勉强继续。", "适合有耐心、能接受慢热展开的观众，时间有限时可暂缓。", "不妨给它设一个明确的继续观看节点，避免因为‘以后再看’而长期占用收藏位置。", "如果你经常被慢节奏劝退，建议先确认中段是否会出现明显转折再投入。", "可以安排连续的短时段观看，减少因间隔过久而重新进入状态的成本。", "搁置不等于否定，等有完整时间时再试一次；仍提不起兴趣就可以放下。"],
+    split: ["建议先确认自己是否属于它的目标受众，再用几集内容验证，而不是依赖均分决策。", "这类作品更吃个人偏好，试播的参考价值会高于排行榜位置。", "可以优先查看题材、叙事风格和负面反馈是否触及自己的雷区。", "如果你对争议点不敏感，它可能值得尝试；反之则应先把风险点看清楚。", "先找与你口味相近的观众评价作参照，避免被单一极端好评或差评带偏。", "观看前列出自己最在意的两三个要素，再用实际内容逐项核对会更有效。", "争议越集中，越应该采用低成本试看的方式，而不是直接承诺看完整部。"],
+    backlog: ["可以继续观望，等更多用户实际观看后再判断也不迟。", "若没有强烈题材兴趣，不妨等待收藏热度转化成更明确的完成反馈。", "现阶段更适合放在候选列表，而不是仅因想看人数多就立即投入。", "想看人数说明关注度不低，但还缺少体验后的反馈，等一轮数据沉淀会更稳妥。", "可以先关注开始观看人数和完成率何时上升，这比单纯的想看规模更有参考价值。", "若排片或时间安排宽松，等口碑样本扩大后再决定，机会成本通常更低。", "把它加入稍后查看清单即可，不需要因为热度积累而立刻开始。"],
     completed: [
       "如果题材符合偏好，可以相对放心地按完整作品安排时间。",
       "较好的完成表现降低了中途踩雷的风险，适合从头完整体验。",
@@ -1048,8 +1168,11 @@ const generatedOverallOpinionAnalysis = computed(() => {
       "完成用户占据了较明确的位置，说明作品的整体节奏和收束能力能够支撑一部分观众走到最后。",
       "如果你希望减少中途弃坑的不确定性，这部作品的收藏反馈相对让人放心。",
       "它的优势更偏向长期留存而不是短期热度，适合按自己的节奏稳定看下去。",
+      "如果你在意作品能否完整收束，当前完成数据可以作为优先尝试的正面参考。",
+      "适合在有连续空闲时间时一次推进几集，完整体验更容易感受到它的节奏优势。",
+      "完成反馈稳定并不意味着人人都会喜欢，仍建议先确认题材和表达方式与你的口味相符。",
     ],
-    neutral: ["建议结合题材偏好和时间成本判断，不必只看总分。", "可以按常规方式试播几集，再依据自己的实际感受决定。", "现有群体数据没有给出强烈劝退或推荐信号，个人兴趣应当成为主要依据。", "它没有明显的群体性风险或额外加成，选择标准可以回到你自己的口味。"],
+    neutral: ["建议结合题材偏好和时间成本判断，不必只看总分。", "可以按常规方式试播几集，再依据自己的实际感受决定。", "现有群体数据没有给出强烈劝退或推荐信号，个人兴趣应当成为主要依据。", "它没有明显的群体性风险或额外加成，选择标准可以回到你自己的口味。", "如果正在寻找稳妥的下一部作品，可以把它和同题材条目横向比较后再排优先级。", "先确认单集时长、总集数和更新状态，时间成本合适时再安排观看。", "没有强信号时，先从最感兴趣的设定或角色入手，实际体验通常很快能给出答案。", "可以把综合评分当作筛选参考，最终决定交给自己的试看片段反馈。"],
   };
   const viewingAdvice = choose(advicePools[collectionCase], 29);
   const implicationPools: Record<string, string[]> = {
@@ -1060,13 +1183,15 @@ const generatedOverallOpinionAnalysis = computed(() => {
       "高热度与高流失可以同时成立：前者说明它容易引起兴趣，后者说明实际体验会迅速筛掉一部分人。",
     ],
     active: ["当前数据更能证明作品具有即时吸引力，长期口碑仍要等待完成用户增加后再确认。", "追看人数是积极的过程信号，但尚不足以替代完结后的留存与评价。", "现阶段可以确认观众愿意继续跟进，最终评价是否稳定仍取决于后续展开。"],
+    "early-exit": ["这说明作品能吸引不少人开始观看，但前期体验也在筛选受众；风险存在，却还不能外推为最终高流失。", "早期退出与持续追看同时存在，作品可能具有一定接受门槛，最终留存仍需等放送推进后判断。"],
     onhold: ["这种结构通常不是强烈反感，而是持续观看动力不足；中段体验比开篇吸引力更值得关注。", "观众没有大规模直接离开，却也缺少继续推进的动力，作品可能存在慢热或节奏阻力。"],
     split: ["这类数据更像明确的受众筛选，而不是所有人共享同一种观感。", "均分会把两种相反体验压成一个数字，实际选择应更多参考自己能否接受争议点。"],
     backlog: ["关注度已经形成，但还没有足够的实际体验数据验证作品能否留住观众。", "想看收藏反映的是兴趣而非质量，当前仍处于等待真实口碑落地的阶段。"],
     completed: ["评分与完成行为相互支持，说明认可不只停留在打分，也反映在完整体验上。", "较好的完成沉淀让当前口碑更有可信度，作品对已开始用户具备一定持续吸引力。"],
     neutral: ["评分与用户去向没有明显冲突，现阶段可以把它视为一部表现相对常规的作品。", "群体数据没有暴露突出风险，也没有给出压倒性的推荐理由。"],
   };
-  const reportSummary = `${choose(ratingPools[ratingCase], 7)} ${choose(collectionPools[collectionCase], 17)} ${choose(implicationPools[collectionCase], 23)}`;
+  const airingCaution = collectionBroadcastPhase.value === "airing" && collectionCase === "active";
+  const reportSummary = `${choose(ratingPools[ratingCase], 7)} ${choose(collectionPools[collectionCase], 17)} ${airingCaution ? `作品仍在放送（${airingProgressText}），当前弃坑比例只覆盖已经作出明确结局的少数用户，不能外推为整体留存风险。` : collectionCase === "early-exit" ? `${choose(implicationPools[collectionCase], 23)} 当前进度为${airingProgressText}，后续集数仍可能改变留存结构。` : choose(implicationPools[collectionCase], 23)}`;
   const ratingMetrics = rating.metrics.map((metric) => `${metric.name}${metric.value}（${metric.label}）`).join("、");
   const collectionMetrics = collection.metrics.map((metric) => `${metric.name}${metric.value}（${metric.label}）`).join("、");
   const titlePools: Record<string, string[]> = {
@@ -1075,6 +1200,7 @@ const generatedOverallOpinionAnalysis = computed(() => {
     "strong-neutral": ["排名靠前，整体认可度较高", "口碑扎实，观众反馈相对一致", "评分与排名都给出积极信号"],
     "steady-completed": ["口碑稳健，完成反馈也较好", "评分平稳，完整体验的反馈不错", "排名和完成度都比较踏实"],
     "steady-active": ["评分平稳，当前仍有追看热度", "口碑稳定，观众正在持续跟进", "整体反馈稳，热度还在继续"],
+    "spike-active": ["评分集中，当前追看仍在继续", "主流票型集中，放送期热度尚未沉淀", "单点评分尖峰，观众仍在持续跟进"],
     "steady-neutral": ["整体反馈比较稳定", "排名适中，口碑没有明显波动", "分数和观众反馈都处在常规范围"],
     "weak-dropout": ["口碑偏弱，观看留存需要谨慎", "评分靠后，弃坑反馈值得留意", "低分与用户流失指向同一个风险"],
     "weak-active": ["口碑偏弱，但当前仍有追看热度", "评分靠后，实时热度尚未转成稳定口碑", "低分之下仍有人追看，体验可能比较挑人"],
@@ -1084,7 +1210,9 @@ const generatedOverallOpinionAnalysis = computed(() => {
     "selective-dropout": ["均分尚可，但作品正在强烈筛选受众", "低分长尾与弃坑行为形成双重警告", "热度不低，实际留存却暴露明显风险", "有人留下高评，也有人迅速退出", "表面口碑无法掩盖较强的劝退效应"],
   };
   const titleKey = `${ratingCase}-${collectionCase}`;
-  const titlePool = titlePools[titleKey] ?? (watch
+  const titlePool = titlePools[titleKey] ?? (collectionCase === "early-exit"
+    ? ["追看仍是主流，但已有早期退出迹象", "放送表现活跃，也存在一定前期门槛", "多数人仍在看，少量退出信号值得观察"]
+    : watch
     ? ["有积极信号，也值得保留一点判断", "口碑与观众行为并不完全一致", "建议结合个人偏好再做决定"]
     : ["整体反馈比较稳定", "分数和收藏表现相对一致", "当前数据没有给出强烈风险信号"]);
   const opinionTitle = choose(titlePool, 43);
@@ -1093,12 +1221,12 @@ const generatedOverallOpinionAnalysis = computed(() => {
     recommendationPercent,
     title: `${subject?.name_cn || subject?.name || "这部作品"}：${opinionTitle}`,
     summary: reportSummary,
-    detail: `评分 ${score > 0 ? score.toFixed(1) : "暂无"} / 10（${total} 人），${rating.profile.description} 收藏样本 ${collection.sampleSize} 份，${collection.profile.description}`,
+    detail: `评分 ${score > 0 ? score.toFixed(1) : "暂无"} / 10（${total} 人），${rating.profile.description} 收藏样本 ${collection.sampleSize} 份，${collection.profile.description}${collectionBroadcastPhase.value === "airing" ? ` 当前放送进度：${airingProgressText}。` : ""}`,
     sections: [
       { label: "评分印象", text: `${rating.profile.description} 当前评分为 ${score > 0 ? score.toFixed(1) : "暂无"} 分，${total} 人参与；关键指标为 ${ratingMetrics}。` },
-      { label: "观众行为", text: strongDropoutRisk ? `明确结局中的弃坑率为 ${(dropoutRate * 100).toFixed(1)}%，弃坑占全部已开始用户的 ${(droppedAmongStartedRate * 100).toFixed(1)}%。${collection.profile.description} 关键指标为 ${collectionMetrics}。` : `${collection.profile.description} 这通常意味着用户对作品的投入阶段并不完全一致。关键指标为 ${collectionMetrics}。` },
-      { label: "需要留意", text: selectiveRisk ? `偏度 ${rating.skewness.toFixed(2)} 显示低分长尾明显，同时明确结局弃坑率达到 ${(dropoutRate * 100).toFixed(1)}%。评分反感与实际退出指向同一风险，作品可能具有题材、表达或体验层面的较强受众门槛。${topicHintText} 标签只是线索，不能单独解释弃坑原因。` : rating.signals.length ? rating.signals.slice(0, 2).map((signal) => `${signal.title}：${signal.evidence}`).join("；") : "评分分布没有触发明显的异常信号。" },
-      { label: "观看建议", text: `${viewingAdvice} 这份报告描述的是群体数据，不会替代你对题材、节奏和制作风格的个人判断。` },
+      { label: "观众行为", text: collectionCase === "early-exit" ? `作品仍在放送（${airingProgressText}），已开始用户中 ${(Number(collectionCounts?.doing ?? 0) / Math.max(1, startedCount) * 100).toFixed(1)}% 仍处于观看中，同时已有 ${(droppedAmongStartedRate * 100).toFixed(1)}% 明确弃坑。后者提示前期可能存在门槛，但尚不能代表最终留存。关键指标为 ${collectionMetrics}。` : airingCaution ? `作品仍在放送（${airingProgressText}），已开始用户中 ${(Number(collectionCounts?.doing ?? 0) / Math.max(1, startedCount) * 100).toFixed(1)}% 仍处于观看中；明确结局弃坑率为 ${(dropoutRate * 100).toFixed(1)}%，仅代表已经结束观看的人群，不能与完结作品的留存直接比较。关键指标为 ${collectionMetrics}。` : moderateDropoutRisk ? `明确结局中的弃坑率为 ${(dropoutRate * 100).toFixed(1)}%，弃坑占全部已开始用户的 ${(droppedAmongStartedRate * 100).toFixed(1)}%。这属于需要留意的退出信号，但已开始用户中仍有较高比例完成。关键指标为 ${collectionMetrics}。` : `${collection.profile.description} 这通常意味着用户对作品的投入阶段并不完全一致。关键指标为 ${collectionMetrics}。` },
+      { label: "需要留意", text: selectiveRisk ? `${skewRiskText}，同时明确结局弃坑率达到 ${(dropoutRate * 100).toFixed(1)}%。评分分化与实际退出指向同一风险，作品可能具有题材、表达或体验层面的较强受众门槛。${topicHintText} 标签只是线索，不能单独解释弃坑原因。` : collectionCase === "early-exit" ? `明确弃坑占全部已开始用户的 ${(droppedAmongStartedRate * 100).toFixed(1)}%，已构成早期退出迹象；但多数用户仍在追看，因此当前只能判断作品可能有一定前期门槛，不能判断最终高流失。${topicHintText}` : moderateDropoutRisk ? `明确结局弃坑率为 ${(dropoutRate * 100).toFixed(1)}%，高于常规水平但尚不足以单独证明强烈劝退；${rating.signals.length ? rating.signals.slice(0, 1).map((signal) => `${signal.title}：${signal.evidence}`).join("；") : "评分侧未发现与退出行为完全一致的异常信号。"}` : rating.signals.length ? rating.signals.slice(0, 2).map((signal) => `${signal.title}：${signal.evidence}`).join("；") : "评分分布没有触发明显的异常信号。" },
+      { label: "观看建议", text: `${airingCaution ? "如果题材感兴趣，可以先看几集观察实际体验；不必根据放送期的明确结局弃坑率提前下结论。" : viewingAdvice} 这份报告描述的是群体数据，不会替代你对题材、节奏和制作风格的个人判断。` },
     ],
   };
 });
@@ -1123,9 +1251,105 @@ const overallOpinionAdvice = computed(() =>
 const overallOpinionEvidenceSections = computed(() =>
   overallOpinionAnalysis.value.sections.filter((section) => section.label !== "观看建议"),
 );
+const overallOpinionCopied = ref(false);
+let overallOpinionCopyTimer: number | null = null;
 const overallOpinionStatus = computed(() =>
   overallOpinionWaitingForBroadcast.value ? "insufficient" : overallOpinionAnalysis.value.status,
 );
+const overallOpinionFaceChanging = ref(false);
+let overallOpinionFaceChangeTimer: number | null = null;
+watch(
+  () => `${overallOpinionStatus.value}:${overallOpinionAnalysis.value.title}`,
+  () => {
+    overallOpinionFaceChanging.value = false;
+    void nextTick(() => {
+      overallOpinionFaceChanging.value = true;
+      if (overallOpinionFaceChangeTimer !== null) window.clearTimeout(overallOpinionFaceChangeTimer);
+      overallOpinionFaceChangeTimer = window.setTimeout(() => {
+        overallOpinionFaceChanging.value = false;
+        overallOpinionFaceChangeTimer = null;
+      }, 560);
+    });
+  },
+);
+onUnmounted(() => {
+  if (overallOpinionFaceChangeTimer !== null) window.clearTimeout(overallOpinionFaceChangeTimer);
+});
+const overallOpinionIsPreRelease = computed(() => collectionBroadcastPhase.value === "not-aired");
+const overallOpinionRecommendationLabel = computed(() =>
+  overallOpinionIsPreRelease.value ? "开播前参考值" : "数据推荐值",
+);
+const overallOpinionRecommendationText = computed(() =>
+  overallOpinionStatus.value === "insufficient"
+    ? "?????"
+    : `${overallOpinionAnalysis.value.recommendationPercent.toFixed(4)}%`,
+);
+const overallOpinionAchievementRankText = computed(() =>
+  overallOpinionStatus.value === "insufficient"
+    ? "?????"
+    : achievementRank(overallOpinionAnalysis.value.recommendationPercent),
+);
+const overallOpinionAchievementRankClass = computed(() => {
+  const rank = overallOpinionAchievementRankText.value;
+  if (rank.startsWith("SSS")) return "is-rank-sss";
+  if (rank.startsWith("SS")) return "is-rank-ss";
+  if (rank.startsWith("S")) return "is-rank-s";
+  if (rank.startsWith("A")) return "is-rank-a";
+  if (rank.startsWith("B")) return "is-rank-b";
+  if (rank.startsWith("C")) return "is-rank-c";
+  if (rank === "D") return "is-rank-d";
+  return "is-rank-unknown";
+});
+const overallOpinionRecommendationBasis = computed(() => {
+  if (overallOpinionStatus.value === "insufficient") return "当前样本不足，推荐值与等级暂不计算。";
+  if (overallOpinionIsPreRelease.value) return "开播前参考值只反映想看热度和低权重的提前评分，排名不参与计算，并设置了等级上限；它不代表成片质量。";
+  return "推荐值基于评分、排名、样本量及风险信号，不代表个人偏好。";
+});
+
+const overallOpinionCopyText = computed(() => {
+  const report = overallOpinionAnalysis.value;
+  const lines = [
+    report.title,
+    "",
+    report.summary,
+    "",
+    `${overallOpinionRecommendationLabel.value}：${overallOpinionRecommendationText.value}（Achievement Rank：${overallOpinionAchievementRankText.value}）`,
+    report.detail,
+    "",
+    ...report.sections.map((section) => `${section.label}\n${section.text}`),
+  ];
+  return lines.join("\n");
+});
+
+async function copyOverallOpinion() {
+  if (overallOpinionWaitingForBroadcast.value) return;
+  const text = overallOpinionCopyText.value;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      if (!copied) throw new Error("clipboard unavailable");
+    }
+    overallOpinionCopied.value = true;
+    appStore.showToast("综合报告已复制到剪贴板", "success");
+    if (overallOpinionCopyTimer !== null) window.clearTimeout(overallOpinionCopyTimer);
+    overallOpinionCopyTimer = window.setTimeout(() => {
+      overallOpinionCopied.value = false;
+      overallOpinionCopyTimer = null;
+    }, 1800);
+  } catch {
+    appStore.showToast("复制失败，请检查剪贴板权限", "error");
+  }
+}
 
 function captureOverallOpinion() {
   if (overallOpinionSnapshot.value || overallOpinionWaitingForBroadcast.value) return;
@@ -3688,7 +3912,7 @@ defineExpose({
             <button
               type="button"
               class="overall-opinion__orb"
-              :class="[`is-${overallOpinionStatus}`, { 'is-dragging': overallOpinionOrbDrag }]"
+              :class="[`is-${overallOpinionStatus}`, { 'is-dragging': overallOpinionOrbDrag, 'is-open': overallOpinionOpen, 'is-changing': overallOpinionFaceChanging }]"
               :style="overallOpinionOrbStyle()"
               :aria-expanded="overallOpinionOpen"
               aria-controls="overall-opinion-panel"
@@ -3698,18 +3922,28 @@ defineExpose({
               @pointerup="endOverallOpinionOrbDrag"
               @pointercancel="endOverallOpinionOrbDrag"
               @click="handleOverallOpinionOrbClick"
-            >🫧</button>
+            >
+              <span class="overall-opinion__face" aria-hidden="true">
+                <span class="overall-opinion__face-eyes"><i></i><i></i></span>
+                <span class="overall-opinion__face-mouth"></span>
+              </span>
+            </button>
             <Transition name="overall-opinion-panel">
             <section v-if="overallOpinionOpen" id="overall-opinion-panel" class="overall-opinion__panel" :class="`is-${overallOpinionStatus}`" :style="overallOpinionOrbStyle()" aria-live="polite" :aria-busy="overallOpinionWaitingForBroadcast">
               <div class="overall-opinion__panel-head">
-                <div>
+                <div class="overall-opinion__panel-topline">
                   <span class="overall-opinion__eyebrow">实验室 · 综合解读</span>
-                  <h5 v-if="overallOpinionWaitingForBroadcast">正在准备综合评价</h5>
-                  <h5 v-else :title="overallOpinionAnalysis.title">
-                    <span class="overall-opinion__title-subject">{{ overallOpinionTitleParts.subject }}</span><span>{{ overallOpinionTitleParts.lead }}</span><span v-if="overallOpinionTitleParts.emphasis" class="overall-opinion__title-emphasis" :class="`is-${overallOpinionTitleParts.tone}`">{{ overallOpinionTitleParts.emphasis }}</span><span>{{ overallOpinionTitleParts.suffix }}</span>
-                  </h5>
+                  <div class="overall-opinion__panel-actions">
+                    <button v-if="!overallOpinionWaitingForBroadcast" type="button" class="overall-opinion__copy" :aria-label="overallOpinionCopied ? '已复制综合报告' : '复制综合报告'" :title="overallOpinionCopied ? '已复制' : '复制综合报告'" @click="copyOverallOpinion">
+                      <span aria-hidden="true">{{ overallOpinionCopied ? '✓' : '⧉' }}</span><span>{{ overallOpinionCopied ? '已复制' : '复制报告' }}</span>
+                    </button>
+                    <button type="button" class="overall-opinion__close" aria-label="关闭总体看法" @click="overallOpinionOpen = false">×</button>
+                  </div>
                 </div>
-                <button type="button" class="overall-opinion__close" aria-label="关闭总体看法" @click="overallOpinionOpen = false">×</button>
+                <h5 v-if="overallOpinionWaitingForBroadcast">正在准备综合评价</h5>
+                <h5 v-else :title="overallOpinionAnalysis.title">
+                  <span class="overall-opinion__title-subject">{{ overallOpinionTitleParts.subject }}</span><span>{{ overallOpinionTitleParts.lead }}</span><span v-if="overallOpinionTitleParts.emphasis" class="overall-opinion__title-emphasis" :class="`is-${overallOpinionTitleParts.tone}`">{{ overallOpinionTitleParts.emphasis }}</span><span>{{ overallOpinionTitleParts.suffix }}</span>
+                </h5>
               </div>
               <template v-if="overallOpinionWaitingForBroadcast">
                 <p>报告正在等待配信跟踪返回更多信息，完成后将自动生成。</p>
@@ -3719,12 +3953,12 @@ defineExpose({
                 <p>{{ overallOpinionCompactSummary }}</p>
                 <div class="overall-opinion__recommendation" aria-label="客观数据推荐值">
                   <div class="overall-opinion__recommendation-metric">
-                    <span>数据推荐值</span>
-                    <strong class="overall-opinion__recommendation-value">{{ overallOpinionAnalysis.recommendationPercent.toFixed(4) }}%</strong>
+                    <span>{{ overallOpinionRecommendationLabel }}</span>
+                    <strong class="overall-opinion__recommendation-value">{{ overallOpinionRecommendationText }}</strong>
                   </div>
                   <div class="overall-opinion__recommendation-metric">
                     <span>Achievement Rank</span>
-                    <strong class="overall-opinion__recommendation-rank">{{ achievementRank(overallOpinionAnalysis.recommendationPercent) }}</strong>
+                    <strong class="overall-opinion__recommendation-rank" :class="overallOpinionAchievementRankClass">{{ overallOpinionAchievementRankText }}</strong>
                   </div>
                 </div>
                 <div v-if="overallOpinionAdvice" class="overall-opinion__advice">
@@ -3735,7 +3969,7 @@ defineExpose({
                   <summary>分析依据</summary>
                   <div class="overall-opinion__evidence-body">
                     <p v-if="overallOpinionCompactSummary !== overallOpinionAnalysis.summary">{{ overallOpinionAnalysis.summary }}</p>
-                    <small>{{ overallOpinionAnalysis.detail }}；推荐值基于评分、排名、样本量及风险信号，不代表个人偏好。</small>
+                    <small>{{ overallOpinionAnalysis.detail }}；{{ overallOpinionRecommendationBasis }}</small>
                     <div class="overall-opinion__sections">
                       <div v-for="section in overallOpinionEvidenceSections" :key="section.label" class="overall-opinion__section">
                         <strong>{{ section.label }}</strong>
@@ -4128,6 +4362,35 @@ defineExpose({
             </div>
           </header>
 
+          <aside v-if="showPreReleaseRatingAdvice" class="my-advice-banner" role="note">
+            <div class="my-advice-banner__icon" aria-hidden="true">!</div>
+            <div class="my-advice-banner__content">
+              <div class="my-advice-banner__head">
+                <p class="my-advice-banner__title">SimpBangumi 不建议在作品尚未开播的情况下对其评分。</p>
+                <button
+                  class="my-advice-banner__toggle"
+                  type="button"
+                  :aria-expanded="preReleaseAdviceExpanded"
+                  @click="togglePreReleaseAdvice"
+                >
+                  {{ preReleaseAdviceExpanded ? '收起' : '展开' }}
+                </button>
+              </div>
+              <Transition name="advice-expand">
+                <div v-if="preReleaseAdviceExpanded" class="my-advice-banner__details">
+                  <p class="my-advice-banner__text">
+                    这可能影响评分参考性，还会对其他用户造成困扰，导致对作品的误解或争议。<br>
+                    如果只是期待作品，建议使用「想看」表达。作为社区一员，我们感谢您对社区环境做出的贡献！
+                  </p>
+                  <p class="my-advice-banner__source">
+                    当然，您仍然可以评分。毕竟这只是我们的友善建议，不是 Bangumi 官方提出的限制。<br>
+                    数据来源自「配信跟踪（Beta）」，请以实际番组播出情况为准。
+                  </p>
+                </div>
+              </Transition>
+            </div>
+          </aside>
+
           <p v-if="!userCanEditCollection" class="my-panel__login-hint">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
             请先登录后查看和修改你的收藏状态。
@@ -4246,6 +4509,10 @@ defineExpose({
                     placeholder="写下你对这部作品的感想..."
                     class="my-form-field__textarea"
                   ></textarea>
+                  <p v-if="appStore.showUsageAdvice.value" class="my-form-advice">
+                    与社区互动时，建议遵守
+                    <a href="https://bangumi.tv/about/guideline" target="_blank" rel="noopener noreferrer"> Bangumi 社区指导原则</a>。
+                  </p>
                 </div>
               </div>
 

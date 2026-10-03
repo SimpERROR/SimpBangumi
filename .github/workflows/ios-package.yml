@@ -1,0 +1,121 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      export_method:
+        description: Package type
+        required: true
+        type: choice
+        default: unsigned-device
+        options:
+          - unsigned-device
+      build_number:
+        description: CFBundleVersion; leave blank to use the workflow run number
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: IPA (${{ inputs.export_method }})
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Initialize iOS project
+        run: npm run tauri ios init -- --ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Archive unsigned iOS app
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+        run: |
+          set -euo pipefail
+          IOS_DIR="src-tauri/gen/apple"
+          ARCHIVE_PATH="$RUNNER_TEMP/SimpBangumi.xcarchive"
+          WORKSPACE=$(find "$IOS_DIR" -maxdepth 1 -name '*.xcworkspace' -print -quit)
+          PROJECT=$(find "$IOS_DIR" -maxdepth 1 -name '*.xcodeproj' -print -quit)
+
+          if [ -n "$WORKSPACE" ]; then
+            XCODE_CONTAINER=(-workspace "$WORKSPACE")
+          elif [ -n "$PROJECT" ]; then
+            XCODE_CONTAINER=(-project "$PROJECT")
+          else
+            echo 'No generated Xcode project found.'
+            exit 1
+          fi
+
+          SCHEME=$(xcodebuild "${XCODE_CONTAINER[@]}" -list -json | jq -r '
+            (.project.schemes // .workspace.schemes // [])[] | select(endswith("_iOS"))
+          ' | head -n 1)
+          if [ -z "$SCHEME" ]; then
+            echo 'No generated iOS scheme found.'
+            exit 1
+          fi
+
+          xcodebuild "${XCODE_CONTAINER[@]}" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+
+          APP_PATH=$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name '*.app' -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo 'No iOS app bundle was produced.'
+            exit 1
+          fi
+
+          rm -rf "$RUNNER_TEMP/Payload"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/Payload" "$RUNNER_TEMP/SimpBangumi-unsigned.ipa"
+
+      - name: Locate unsigned IPA
+        id: ipa
+        run: |
+          IPA_PATH="$RUNNER_TEMP/SimpBangumi-unsigned.ipa"
+          if [ ! -f "$IPA_PATH" ]; then
+            echo 'No IPA was generated.'
+            exit 1
+          fi
+          echo "path=$IPA_PATH" >> "$GITHUB_OUTPUT"
+          echo "Generated unsigned IPA: $IPA_PATH"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpBangumi-ios-unsigned-${{ inputs.build_number || github.run_number }}
+          if-no-files-found: error
+          path: ${{ steps.ipa.outputs.path }}

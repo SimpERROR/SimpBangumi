@@ -16,6 +16,7 @@ use auth::{
     AuthSession, OAuthAuthorizeUrl, OAuthFinishStatus, OAuthStartLoginRequest, WebCookieStatus,
 };
 use bangumi::{BangumiClient, BangumiUser};
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use tauri::webview::PageLoadEvent;
 
 struct ApiState {
@@ -590,6 +591,7 @@ async fn validate_cookie_header_against_bangumi(cookie: &str) -> Result<bool, St
     Ok(!page_shows_auth_buttons(&body))
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 async fn capture_cookie_header_from_window(
     webview_window: tauri::WebviewWindow,
 ) -> Result<String, String> {
@@ -634,6 +636,7 @@ async fn capture_cookie_header_from_window(
         .join("; "))
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 async fn open_hidden_bangumi_cookie_recovery_window(
     app: &tauri::AppHandle,
 ) -> Result<tauri::WebviewWindow, String> {
@@ -710,6 +713,7 @@ async fn open_hidden_bangumi_cookie_recovery_window(
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 async fn restore_web_cookie_from_embedded_session_impl(
     app: tauri::AppHandle,
 ) -> Result<WebCookieStatus, String> {
@@ -1524,6 +1528,7 @@ async fn bangumi_fetch_user_mono_collections_page(
     Ok(body)
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 #[tauri::command]
 async fn bangumi_open_embedded_web_login(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(WEB_LOGIN_WINDOW_LABEL) {
@@ -1559,7 +1564,14 @@ async fn bangumi_open_embedded_web_login(app: tauri::AppHandle) -> Result<(), St
     Ok(())
 }
 
+#[cfg(any(target_os = "ios", target_os = "android"))]
 #[tauri::command]
+async fn bangumi_open_embedded_web_login(_app: tauri::AppHandle) -> Result<(), String> {
+    Err("iOS/Android 不支持应用内网页登录窗口，请使用 OAuth 登录或手动导入 Cookie。".to_string())
+}
+
+#[tauri::command]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 async fn bangumi_capture_embedded_web_cookie(
     app: tauri::AppHandle,
 ) -> Result<WebCookieStatus, String> {
@@ -1578,6 +1590,14 @@ async fn bangumi_capture_embedded_web_cookie(
     let _ = webview_window.close();
 
     Ok(status)
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+#[tauri::command]
+async fn bangumi_capture_embedded_web_cookie(
+    _app: tauri::AppHandle,
+) -> Result<WebCookieStatus, String> {
+    Err("iOS/Android 不支持从应用内网页登录窗口读取 Cookie。".to_string())
 }
 
 #[tauri::command]
@@ -1599,6 +1619,13 @@ fn bangumi_clear_web_cookie() -> Result<WebCookieStatus, String> {
 async fn bangumi_restore_web_cookie_from_embedded_session(
     app: tauri::AppHandle,
 ) -> Result<WebCookieStatus, String> {
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let _ = app;
+
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    return Err("iOS/Android 不支持应用内网页登录会话恢复，请使用 OAuth 登录或手动导入 Cookie。".to_string());
+
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     restore_web_cookie_from_embedded_session_impl(app).await
 }
 

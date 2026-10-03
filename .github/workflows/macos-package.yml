@@ -1,0 +1,68 @@
+name: Build macOS Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: macOS architecture to package
+        required: true
+        type: choice
+        default: universal-apple-darwin
+        options:
+          - universal-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package (${{ inputs.target }})
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build macOS bundles
+        env:
+          # Ad-hoc signing lets unsigned CI artifacts launch without requiring
+          # an Apple Developer certificate. Distribution signing can be added
+          # later with APPLE_CERTIFICATE and APPLE_SIGNING_IDENTITY secrets.
+          APPLE_SIGNING_IDENTITY: "-"
+        run: npm run tauri build -- --target "${{ inputs.target }}" --bundles dmg
+
+      - name: List generated bundles
+        run: |
+          find src-tauri/target -type f \( \
+            -name '*.dmg' \
+          \) -print
+
+      - name: Upload macOS bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpBangumi-macos-${{ inputs.target }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/**/bundle/dmg/*.dmg

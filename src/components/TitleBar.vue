@@ -7,8 +7,10 @@ import {
   minimizeWindow,
   toggleMaximizeWindow,
 } from "../tauri/windowControls";
+import { isDesktopPlatform } from "../platform";
 
 const appStore = useAppStore();
+const showDesktopTitleBar = isDesktopPlatform;
 
 const maximizeLabel = computed(() =>
   appStore.window.maximized || appStore.window.fullscreen ? "窗口化" : "最大化",
@@ -33,7 +35,7 @@ async function onTitleBarDoubleClick(event: MouseEvent) {
 </script>
 
 <template>
-  <header class="titlebar" @dblclick="onTitleBarDoubleClick">
+  <header v-if="showDesktopTitleBar" class="titlebar" @dblclick="onTitleBarDoubleClick">
     <div class="titlebar__brand" data-tauri-drag-region>
       <img class="titlebar__logo" :src="logoUrl" alt="SimpBangumi 徽标" />
       <span>SimpBangumi</span>

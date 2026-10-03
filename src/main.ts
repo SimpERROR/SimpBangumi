@@ -4,6 +4,7 @@ import "./styles.css";
 import { initializeWindowState } from "./tauri/windowControls";
 import { useAppStore, type ThemeMode } from "./stores/app";
 import { installDiagnosticsErrorListeners } from "./composables/useDiagnostics";
+import { isDesktopPlatform } from "./platform";
 
 const THEME_KEY = "bangumi.theme";
 
@@ -30,4 +31,6 @@ installDiagnosticsErrorListeners();
 
 createApp(App).mount("#app");
 document.documentElement.classList.remove("app-booting");
-void initializeWindowState();
+if (isDesktopPlatform) {
+	void initializeWindowState();
+}

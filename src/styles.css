@@ -232,6 +232,21 @@ img {
   overflow: hidden;
 }
 
+.window--mobile {
+  --titlebar-height: 0px;
+  grid-template-rows: 1fr;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.window--mobile .page {
+  padding-top: max(20px, env(safe-area-inset-top));
+}
+
+.window--mobile .app-toast {
+  top: calc(env(safe-area-inset-top) + 14px);
+}
+
 .app-toast {
   position: fixed;
   top: calc(var(--titlebar-height) + 14px);

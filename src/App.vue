@@ -25,6 +25,7 @@ import ImageContextMenu from "./components/ImageContextMenu.vue";
 import { checkTimeDrift, setTimeMismatch } from "./utils/timeCheck";
 import { useLinkInterceptor } from "./composables/useLinkInterceptor";
 import { useBroadcastNotify } from "./composables/useBroadcastNotify";
+import { isDesktopPlatform } from "./platform";
 
 const loadCollectionsView = () => import("./views/Collections.vue");
 const loadSettingsView = () => import("./views/Settings.vue");
@@ -547,6 +548,7 @@ watch([activeHomeTab, collectionSection], ([tab, section]) => {
 });
 
 async function loadLive2dModels() {
+  if (!isDesktopPlatform) return;
   try {
     const models = await invoke<Live2dModelInfo[]>("list_live2d_models");
     appStore.live2dModels.value = models;
@@ -612,15 +614,17 @@ onMounted(() => {
   }
 
   // Start broadcast notification system if enabled
-  if (localStorage.getItem("bangumi.broadcast.notifyEnabled") === "1") {
+  if (isDesktopPlatform && localStorage.getItem("bangumi.broadcast.notifyEnabled") === "1") {
     broadcastNotify.startBroadcastNotify();
   }
 
   // Close notification window when main window is about to close.
   // Fire-and-forget — don't await, so the close isn't delayed.
-  void getCurrentWindow().onCloseRequested(() => {
-    broadcastNotify.stopBroadcastNotify();
-  });
+  if (isDesktopPlatform) {
+    void getCurrentWindow().onCloseRequested(() => {
+      broadcastNotify.stopBroadcastNotify();
+    });
+  }
 });
 
 onUnmounted(() => {
@@ -635,7 +639,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="window">
+  <div class="window" :class="{ 'window--mobile': !isDesktopPlatform }">
     <Transition name="toast-slide">
       <aside
         v-if="appStore.toast.visible"
@@ -803,7 +807,7 @@ onUnmounted(() => {
     </main>
 
     <Live2dCompanion
-      v-if="appStore.live2dEnabled.value"
+      v-if="isDesktopPlatform && appStore.live2dEnabled.value"
       :visible="appStore.live2dEnabled.value"
       :model-url="appStore.live2dModels.value.find(m => m.name === appStore.live2dActiveModel.value)?.path ?? undefined"
       :pointer-through="appStore.detailDrawerOpen.value"

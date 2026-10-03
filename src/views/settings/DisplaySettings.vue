@@ -5,8 +5,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../../stores/app";
 import type { Live2dModelInfo } from "../../stores/app";
 import { linkConfirmEnabled } from "../../composables/useLinkInterceptor";
+import { isDesktopPlatform } from "../../platform";
 
 const appStore = useAppStore();
+const showDesktopFeatures = isDesktopPlatform;
 
 const AUTO_SPEAK_MIN = 5;
 const AUTO_SPEAK_MAX = 300;
@@ -55,6 +57,7 @@ const newModelName = ref("");
 const hasModel = computed(() => appStore.live2dModels.value.length > 0);
 
 onMounted(async () => {
+  if (!showDesktopFeatures) return;
   try {
     const models = await invoke<Live2dModelInfo[]>("list_live2d_models");
     appStore.live2dModels.value = models;
@@ -332,7 +335,7 @@ const autoSpeakRangeStyle = computed(() => {
     </section>
 
     <!-- ═══ Live2D 看板娘 ═══ -->
-    <section class="settings-card">
+    <section v-if="showDesktopFeatures" class="settings-card">
       <h3 class="settings-card__title">Live2D 看板娘</h3>
       <p class="settings-card__desc">在桌面右下角显示 Live2D 吉祥物。</p>
 

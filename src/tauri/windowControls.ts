@@ -1,10 +1,12 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "../stores/app";
+import { isDesktopPlatform } from "../platform";
 
 const appWindow = getCurrentWindow();
 let listenersBound = false;
 
 export async function syncWindowState() {
+  if (!isDesktopPlatform) return;
   const appStore = useAppStore();
   const [maximized, fullscreen] = await Promise.all([
     appWindow.isMaximized(),
@@ -16,6 +18,7 @@ export async function syncWindowState() {
 }
 
 export async function bindWindowEvents() {
+  if (!isDesktopPlatform) return;
   if (listenersBound) {
     return;
   }
@@ -33,19 +36,23 @@ export async function bindWindowEvents() {
 }
 
 export async function initializeWindowState() {
+  if (!isDesktopPlatform) return;
   await bindWindowEvents();
   await syncWindowState();
 }
 
 export async function minimizeWindow() {
+  if (!isDesktopPlatform) return;
   await appWindow.minimize();
 }
 
 export async function closeWindow() {
+  if (!isDesktopPlatform) return;
   await appWindow.close();
 }
 
 export async function toggleMaximizeWindow() {
+  if (!isDesktopPlatform) return;
   const appStore = useAppStore();
 
   if (appStore.window.fullscreen) {

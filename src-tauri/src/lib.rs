@@ -659,7 +659,6 @@ async fn open_hidden_bangumi_cookie_recovery_window(
             .inner_size(980.0, 760.0)
             .resizable(true)
             .visible(false)
-            .focused(false)
             .skip_taskbar(true)
             .on_navigation(|url| {
                 if matches!(url.scheme(), "http" | "https") {

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, nextTick } from "vue";
 import { useBangumi } from "../composables/useBangumi";
 import { useAppStore } from "../stores/app";
 import { useDataStore } from "../stores/data";
 import { isFollowed } from "../composables/useBroadcastNotify";
 import type { CalendarDay, CalendarSubject } from "../api/bangumi";
+import appLogo from "../assets/app-logo.png";
+import { getBangumiImage, handleImageError } from "../utils/imageUrl";
 
 const emit = defineEmits<{
   openSubject: [subjectId: number];
@@ -56,7 +58,7 @@ const selectedDaySubjects = computed(() => {
 });
 
 function cover(images?: Record<string, string | undefined>) {
-  return images?.grid || images?.small || images?.common || "";
+  return getBangumiImage(images, ["large", "common", "medium", "grid", "small"]);
 }
 
 function subjectTypeLabel(type?: number) {
@@ -92,6 +94,13 @@ function notpreferredSubjectTitle(name?: string, nameCn?: string, fallback = "")
 
 function selectDay(index: number) {
   selectedDayIndex.value = index;
+  void nextTick(() => {
+    document.querySelector<HTMLElement>(`.schedule__day-tab[data-day-index="${index}"]`)?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  });
 }
 
 function openSubject(item: CalendarSubject) {
@@ -133,6 +142,7 @@ defineExpose({ refresh });
           'is-active': selectedDayIndex === index,
           'is-today': todayIndex === index,
         }"
+        :data-day-index="index"
         type="button"
         @click="selectDay(index)"
       >
@@ -168,7 +178,7 @@ defineExpose({ refresh });
         @click="openSubject(item)"
       >
         <div class="cover">
-          <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" />
+          <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
           <span v-else>BG</span>
         </div>
         <div class="item__main">

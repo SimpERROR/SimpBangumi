@@ -32,6 +32,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"]
+    "targets": ["nsis"],
+    "iOS": {
+      "infoPlist": "Info.ios.plist"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["simpbangumi"]
+      }
+    }
   }
 }

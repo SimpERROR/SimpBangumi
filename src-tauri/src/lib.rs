@@ -44,7 +44,7 @@ fn system_audio_output_status() -> Result<SystemAudioOutputStatus, String> {
         let result = (|| -> windows::core::Result<SystemAudioOutputStatus> {
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
             let endpoint = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
-            let volume: IAudioEndpointVolume = endpoint.Activate(CLSCTX_ALL, None)?;
+            let volume: IAudioEndpointVolume = endpoint.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)?;
             Ok(SystemAudioOutputStatus {
                 muted: volume.GetMute()?.as_bool(),
                 volume: volume.GetMasterVolumeLevelScalar()?,
@@ -777,6 +777,11 @@ async fn bangumi_oauth_finish_login(
     state: tauri::State<'_, ApiState>,
 ) -> Result<OAuthFinishStatus, String> {
     auth::finish_oauth_login(&state.client).await
+}
+
+#[tauri::command]
+fn bangumi_oauth_submit_callback(url: String) -> Result<(), String> {
+    auth::submit_oauth_callback(&url)
 }
 
 #[tauri::command]
@@ -2263,6 +2268,7 @@ pub fn run() {
         .manage(api_state)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             bangumi_fetch_image_data_url,
             system_audio_output_status,
@@ -2280,6 +2286,7 @@ pub fn run() {
             read_live2d_nsfw_exit_file,
             bangumi_oauth_start_login,
             bangumi_oauth_finish_login,
+            bangumi_oauth_submit_callback,
             bangumi_login_with_pat,
             bangumi_refresh_oauth_session,
             bangumi_auth_session,

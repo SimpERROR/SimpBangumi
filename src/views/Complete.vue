@@ -9,6 +9,8 @@ import { useSessionStore } from "../stores/session";
 import { isFollowed } from "../composables/useBroadcastNotify";
 import type { Episode, SubjectCollection } from "../api/bangumi";
 import type { SubjectTypeFilter } from "../stores/app";
+import appLogo from "../assets/app-logo.png";
+import { getBangumiImage, handleImageError } from "../utils/imageUrl";
 
 const emit = defineEmits<{
   openSubject: [subjectId: number];
@@ -178,7 +180,7 @@ watch(subjectTypeFilter, (value) => {
 });
 
 function cover(images?: Record<string, string | undefined>) {
-  return images?.grid || images?.small || images?.common || "";
+  return getBangumiImage(images, ["large", "common", "medium", "grid", "small"]);
 }
 
 function subjectTypeLabel(type?: number) {
@@ -639,7 +641,7 @@ defineExpose({
       <TransitionGroup name="item-reveal" tag="div" class="complete-items">
         <article v-for="collection in subjectGroup.items" :key="collection.subject_id ?? collection.updated_at ?? collection.comment" class="item complete-item">
           <div class="cover">
-            <img v-if="cover(collection.subject?.images)" :src="cover(collection.subject?.images)" alt="" loading="lazy" />
+            <img v-if="cover(collection.subject?.images)" :src="cover(collection.subject?.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
             <span v-else>BG</span>
           </div>
 

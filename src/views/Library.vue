@@ -16,6 +16,8 @@ import type {
   UserCharacterCollection,
   UserPersonCollection,
 } from "../api/bangumi";
+import appLogo from "../assets/app-logo.png";
+import { getBangumiImage, handleImageError } from "../utils/imageUrl";
 
 type LibraryTab = "character" | "person" | "index";
 type IndexListMode = "created" | "collected";
@@ -189,7 +191,7 @@ function setIndexCategoryFilter(filter: IndexSearchType) {
   refreshIndexSubjectPage();
 }
 function cover(images?: Record<string, string | undefined>) {
-  return images?.grid || images?.small || images?.medium || images?.large || "";
+  return getBangumiImage(images, ["large", "common", "medium", "grid", "small"]);
 }
 
 function subjectCollectionType(id: number): number {
@@ -1251,7 +1253,7 @@ defineExpose({
             @click="activeTab === 'character' ? openCharacterDetail(item.id) : openPersonDetail(item.id)"
           >
             <span class="library-item__cover">
-              <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" />
+              <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
               <span v-else>BG</span>
             </span>
             <span class="library-item__body">
@@ -1500,7 +1502,7 @@ defineExpose({
                           @mousedown.prevent="selectSearchSubject(subject)"
                         >
                           <span class="index-subject-search__cover">
-                            <img v-if="cover(subject.images)" :src="cover(subject.images)" alt="" loading="lazy" />
+                            <img v-if="cover(subject.images)" :src="cover(subject.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
                             <span v-else>BG</span>
                           </span>
                           <span class="index-subject-search__copy">
@@ -1547,7 +1549,7 @@ defineExpose({
                 <article v-for="subject in indexSubjects" :key="subject.relation_id || `${subject.kind || 'subject'}-${subject.id}`" class="index-subject">
                   <button class="index-subject__main" type="button" @click="openIndexSubject(subject)">
                     <span class="index-subject__cover">
-                      <img v-if="cover(subject.images)" :src="cover(subject.images)" alt="" loading="lazy" />
+                      <img v-if="cover(subject.images)" :src="cover(subject.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
                       <span v-else>BG</span>
                     </span>
                     <span class="index-subject__body">

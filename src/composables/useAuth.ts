@@ -5,6 +5,7 @@ import type { AuthSession } from "../api/bangumi";
 import { useAppStore } from "../stores/app";
 import { useSessionStore } from "../stores/session";
 import { useBangumi, type ApiResult } from "./useBangumi";
+import { isDesktopPlatform } from "../platform";
 
 const OAUTH_POLL_INTERVAL_MS = 800;
 const OAUTH_WAIT_TIMEOUT_MS = 190000;
@@ -28,6 +29,7 @@ function sleep(ms: number) {
 }
 
 async function focusAppWindow() {
+  if (!isDesktopPlatform) return;
   try {
     const appWindow = getCurrentWindow();
     await appWindow.show();

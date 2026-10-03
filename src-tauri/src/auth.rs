@@ -32,6 +32,9 @@ const ENCRYPTED_FILE_PREFIX: &str = "dpapi:v1:";
 const AUTH_BASE_URL: &str = "https://bgm.tv";
 const WORKER_PROXY_URL: &str = "https://simpbangumiproxy.pulsebeatrhythm.top";
 const OAUTH_CLIENT_ID: &str = "bgm64976a469e533c132";
+#[cfg(target_os = "ios")]
+const OAUTH_REDIRECT_URI: &str = "simpbangumi://oauth/callback";
+#[cfg(not(target_os = "ios"))]
 const OAUTH_REDIRECT_URI: &str = "http://127.0.0.1:46231/oauth/callback";
 const OAUTH_TIMEOUT_SECONDS: u64 = 180;
 const WORKER_SIGNATURE_VERSION: &str = "v2";
@@ -40,6 +43,8 @@ static OAUTH_LOGIN_RECEIVER: OnceLock<
     Mutex<Option<mpsc::Receiver<Result<OAuthCallbackResult, String>>>>,
 > = OnceLock::new();
 static OAUTH_PENDING_CALLBACK: OnceLock<Mutex<Option<OAuthCallbackResult>>> = OnceLock::new();
+#[cfg(target_os = "ios")]
+static OAUTH_MOBILE_CONTEXT: OnceLock<Mutex<Option<OAuthMobileContext>>> = OnceLock::new();
 static WEB_COOKIE_CACHE: OnceLock<Mutex<Option<Arc<StoredWebCookie>>>> = OnceLock::new();
 static OAUTH_REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -490,6 +495,13 @@ struct OAuthCallbackResult {
     code_verifier: String,
 }
 
+#[cfg(target_os = "ios")]
+#[derive(Debug)]
+struct OAuthMobileContext {
+    state: String,
+    code_verifier: Zeroizing<String>,
+}
+
 impl Drop for OAuthCallbackResult {
     fn drop(&mut self) {
         self.code.zeroize();
@@ -851,18 +863,92 @@ pub fn start_oauth_login(_state: Option<String>) -> Result<OAuthAuthorizeUrl, St
     let code_verifier = generate_pkce_verifier()?;
     let code_challenge = pkce_code_challenge(&code_verifier);
     let authorize_url = build_oauth_authorize_url(&config, &state, &code_challenge)?;
-    let (tx, rx) = mpsc::channel::<Result<OAuthCallbackResult, String>>();
-    *guard = Some(rx);
+    #[cfg(target_os = "ios")]
+    {
+        drop(guard);
+        let mobile_store = OAUTH_MOBILE_CONTEXT.get_or_init(|| Mutex::new(None));
+        let mut mobile = mobile_store
+            .lock()
+            .map_err(|_| "OAuth mobile state lock poisoned".to_string())?;
+        *mobile = Some(OAuthMobileContext {
+            state,
+            code_verifier: Zeroizing::new(code_verifier),
+        });
+    }
 
-    std::thread::spawn(move || {
-        let result = wait_for_callback_and_capture_code(config, state, code_verifier);
-        let _ = tx.send(result);
-    });
+    #[cfg(not(target_os = "ios"))]
+    {
+        let (tx, rx) = mpsc::channel::<Result<OAuthCallbackResult, String>>();
+        *guard = Some(rx);
+
+        std::thread::spawn(move || {
+            let result = wait_for_callback_and_capture_code(config, state, code_verifier);
+            let _ = tx.send(result);
+        });
+    }
 
     Ok(authorize_url)
 }
 
+pub fn submit_oauth_callback(callback_url: &str) -> Result<(), String> {
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = callback_url;
+        return Err("Mobile OAuth callback is only available on iOS/Android".to_string());
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        let url = Url::parse(callback_url).map_err(|error| format!("Invalid OAuth callback URL: {error}"))?;
+        if url.scheme() != "simpbangumi" || url.path() != "/oauth/callback" {
+            return Err("Unexpected OAuth callback URL".to_string());
+        }
+
+        let callback_state = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "state").then(|| value.into_owned()));
+        let code = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "code").then(|| value.into_owned()))
+            .ok_or_else(|| "OAuth callback missing code".to_string())?;
+
+        let mobile_store = OAUTH_MOBILE_CONTEXT.get_or_init(|| Mutex::new(None));
+        let mut mobile = mobile_store
+            .lock()
+            .map_err(|_| "OAuth mobile state lock poisoned".to_string())?;
+        let context = mobile
+            .as_ref()
+            .ok_or_else(|| "No mobile OAuth login in progress".to_string())?;
+        if callback_state.as_deref() != Some(context.state.as_str()) {
+            return Err("OAuth state validation failed".to_string());
+        }
+        let context = mobile.take().expect("OAuth mobile context was checked above");
+
+        let pending_store = OAUTH_PENDING_CALLBACK.get_or_init(|| Mutex::new(None));
+        let mut pending = pending_store
+            .lock()
+            .map_err(|_| "OAuth pending callback lock poisoned".to_string())?;
+        *pending = Some(OAuthCallbackResult {
+            code,
+            code_verifier: context.code_verifier.to_string(),
+        });
+        Ok(())
+    }
+}
+
 pub fn wait_oauth_login_result() -> Result<OAuthLoginStatus, String> {
+    #[cfg(target_os = "ios")]
+    {
+        return Ok(OAuthLoginStatus {
+            completed: false,
+            code: None,
+            code_verifier: None,
+            error: None,
+        });
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    {
     let receiver_store = OAUTH_LOGIN_RECEIVER.get_or_init(|| Mutex::new(None));
     let mut guard = receiver_store
         .lock()
@@ -911,6 +997,7 @@ pub fn wait_oauth_login_result() -> Result<OAuthLoginStatus, String> {
                 error: Some("OAuth login worker disconnected".to_string()),
             })
         }
+    }
     }
 }
 

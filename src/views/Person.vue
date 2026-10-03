@@ -6,6 +6,8 @@ import BbcodeSummary from "../components/BbcodeSummary.vue";
 import { formatReadableDateTime } from "../utils/datetime";
 import { useAppStore } from "../stores/app";
 import { useSessionStore } from "../stores/session";
+import appLogo from "../assets/app-logo.png";
+import { getBangumiImage, handleImageError } from "../utils/imageUrl";
 
 const props = defineProps<{
   personId: number | null;
@@ -25,7 +27,7 @@ const collected = ref<boolean | null>(null);
 const collectionSaving = ref(false);
 
 function cover(images?: Record<string, string | undefined>) {
-  return images?.large || images?.medium || images?.small || images?.grid || "";
+  return getBangumiImage(images, ["large", "medium", "small", "grid"]);
 }
 
 function personTypeLabel(type?: number) {
@@ -169,7 +171,7 @@ defineExpose({
       <article class="detail-section person-hero-panel">
         <div class="person-hero">
           <div class="person-hero__cover">
-            <img v-if="cover(detail.images)" :src="cover(detail.images)" alt="" loading="lazy" />
+            <img v-if="cover(detail.images)" :src="cover(detail.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
             <span v-else>BG</span>
           </div>
           <div class="person-hero__main">

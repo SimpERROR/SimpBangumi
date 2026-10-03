@@ -26,6 +26,8 @@ import {
 } from "../utils/ratingComparison";
 import RatingComparisonModal from "../components/RatingComparisonModal.vue";
 import bangumiMark from "../assets/bangumi.png";
+import appLogo from "../assets/app-logo.png";
+import { getBangumiImage, handleImageError } from "../utils/imageUrl";
 import type {
   BangumiUser,
   CharacterDetail,
@@ -1896,11 +1898,11 @@ const groupedEpisodes = computed(() => {
 });
 
 function cover(images?: Record<string, string | undefined>) {
-  return images?.grid || images?.small || images?.common || "";
+  return getBangumiImage(images, ["large", "common", "medium", "grid", "small"]);
 }
 
 function detailCover(images?: Record<string, string | undefined>) {
-  return images?.large || images?.common || images?.medium || images?.small || "";
+  return getBangumiImage(images, ["large", "common", "medium", "small", "grid"]);
 }
 
 function commentAvatar(url?: string) {
@@ -1964,11 +1966,11 @@ async function loadMyselfProfile() {
 }
 
 function personCover(images?: Record<string, string | undefined>) {
-  return images?.large || images?.medium || images?.small || images?.grid || "";
+  return getBangumiImage(images, ["large", "medium", "small", "grid"]);
 }
 
 function monoCover(images?: Record<string, string | undefined>) {
-  return images?.grid || images?.small || images?.medium || images?.large || "";
+  return getBangumiImage(images, ["large", "medium", "small", "grid"]);
 }
 
 function openImagePreview(url: string, title: string) {
@@ -3653,7 +3655,7 @@ defineExpose({
             @click="openDetail(collection)"
           >
             <div class="cover">
-              <img v-if="cover(collection.subject?.images)" :src="cover(collection.subject?.images)" alt="" loading="lazy" />
+              <img v-if="cover(collection.subject?.images)" :src="cover(collection.subject?.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
               <span v-else>BG</span>
             </div>
             <div class="item__main">
@@ -4134,6 +4136,7 @@ defineExpose({
             alt=""
             loading="lazy"
             @click="openImagePreview(detailCover(detail.images), preferredSubjectTitle(detail.name, detail.name_cn, `Subject #${detail.id}`))"
+            @error="handleImageError($event, appLogo)"
           />
           <span v-else>BG</span>
         </div>

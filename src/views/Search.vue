@@ -7,6 +7,8 @@ import { useDataStore } from "../stores/data";
 import { useSessionStore } from "../stores/session";
 import { isFollowed } from "../composables/useBroadcastNotify";
 import type { PersonCareer, SearchCharacter, SearchPerson, SearchSubject } from "../api/bangumi";
+import appLogo from "../assets/app-logo.png";
+import { getBangumiImage, handleImageError } from "../utils/imageUrl";
 
 const emit = defineEmits<{
   openSubject: [subjectId: number];
@@ -143,7 +145,7 @@ const emptyMessage = computed(() => {
 });
 
 function cover(images?: Record<string, string | undefined>) {
-  return images?.grid || images?.small || images?.common || "";
+  return getBangumiImage(images, ["large", "common", "medium", "grid", "small"]);
 }
 
 function subjectTypeLabel(type?: number) {
@@ -550,7 +552,7 @@ async function prevPage() {
     <section v-else-if="searchType === 'subject' && subjectResults.length > 0" class="list">
       <button v-for="item in subjectResults" :key="item.id" class="item item--button search-item" type="button" @click="openSubject(item)">
         <div class="cover">
-          <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" />
+          <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
           <span v-else>BG</span>
         </div>
         <div class="item__main">
@@ -582,7 +584,7 @@ async function prevPage() {
     <section v-else-if="searchType === 'character' && characterResults.length > 0" class="list">
       <button v-for="item in characterResults" :key="item.id" class="item item--button search-item" type="button" @click="openCharacter(item)">
         <div class="cover">
-          <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" />
+          <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
           <span v-else>CH</span>
         </div>
         <div class="item__main">
@@ -599,7 +601,7 @@ async function prevPage() {
     <section v-else-if="searchType === 'person' && personResults.length > 0" class="list">
       <button v-for="item in personResults" :key="item.id" class="item item--button search-item" type="button" @click="openPerson(item)">
         <div class="cover">
-          <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" />
+          <img v-if="cover(item.images)" :src="cover(item.images)" alt="" loading="lazy" @error="handleImageError($event, appLogo)" />
           <span v-else>PE</span>
         </div>
         <div class="item__main">

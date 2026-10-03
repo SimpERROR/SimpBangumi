@@ -169,6 +169,7 @@ watch([activeHomeTab, collectionSection], () => {
 
 const cookieAutoRefreshTimer = ref<number | null>(null);
 const cookieInvalidToastShown = ref(false);
+let deepLinkUnlisten: (() => void) | null = null;
 
 function parseAvatar(avatar: unknown): string {
   if (typeof avatar === "string") return absoluteBangumiUrl(avatar);
@@ -569,6 +570,25 @@ watch(
 onMounted(() => {
   setupPreferencePersistence();
 
+  if (!isDesktopPlatform) {
+    void import("@tauri-apps/plugin-deep-link").then(async ({ getCurrent, onOpenUrl }) => {
+      const handleUrls = (urls: string[]) => {
+        for (const callback of urls) {
+          if (!callback.startsWith("simpbangumi://oauth/callback")) continue;
+          void invoke("bangumi_oauth_submit_callback", { url: callback }).catch((error) => {
+            console.warn("[auth] deep-link callback rejected", error);
+          });
+        }
+      };
+
+      const current = await getCurrent();
+      if (current) handleUrls(current);
+      deepLinkUnlisten = await onOpenUrl(handleUrls);
+    }).catch((error) => {
+      console.warn("[auth] deep-link plugin unavailable", error);
+    });
+  }
+
   void refreshWebCookieSilently();
   cookieAutoRefreshTimer.value = window.setInterval(() => {
     void refreshWebCookieSilently();
@@ -628,6 +648,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  deepLinkUnlisten?.();
+  deepLinkUnlisten = null;
   window.removeEventListener("resize", updateTabIndicators);
   if (cookieAutoRefreshTimer.value !== null) {
     window.clearInterval(cookieAutoRefreshTimer.value);
@@ -805,6 +827,24 @@ onUnmounted(() => {
         @next="home.nextPage"
       />
     </main>
+
+    <nav v-if="!isDesktopPlatform" class="mobile-bottom-nav" aria-label="主导航">
+      <button class="mobile-bottom-nav__item" :class="{ 'is-active': activeHomeTab === 'complete' }" type="button" @click="activateHomeTab('complete')">
+        <span class="mobile-bottom-nav__icon" aria-hidden="true">✓</span><span>完成</span>
+      </button>
+      <button class="mobile-bottom-nav__item" :class="{ 'is-active': activeHomeTab === 'collections' }" type="button" @click="activateHomeTab('collections')">
+        <span class="mobile-bottom-nav__icon" aria-hidden="true">☆</span><span>收藏</span>
+      </button>
+      <button class="mobile-bottom-nav__item" :class="{ 'is-active': activeHomeTab === 'schedule' }" type="button" @click="activateHomeTab('schedule')">
+        <span class="mobile-bottom-nav__icon" aria-hidden="true">▦</span><span>排期</span>
+      </button>
+      <button class="mobile-bottom-nav__item" :class="{ 'is-active': activeHomeTab === 'search' }" type="button" @click="activateHomeTab('search')">
+        <span class="mobile-bottom-nav__icon" aria-hidden="true">⌕</span><span>搜索</span>
+      </button>
+      <button class="mobile-bottom-nav__item" :class="{ 'is-active': ['more', 'my', 'settings'].includes(activeHomeTab) }" type="button" @click="activateHomeTab('more')">
+        <span class="mobile-bottom-nav__icon" aria-hidden="true">•••</span><span>更多</span>
+      </button>
+    </nav>
 
     <Live2dCompanion
       v-if="isDesktopPlatform && appStore.live2dEnabled.value"

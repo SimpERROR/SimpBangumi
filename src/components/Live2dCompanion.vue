@@ -14,6 +14,7 @@ const dialogText = ref("");
 const dialogTimer = ref<number | null>(null);
 const nsfwFirstNoticeVisible = ref(false);
 let autoSpeakTimer: number | null = null;
+let prioritySpeechUntil = 0;
 
 function getRandomMessage(): string {
   const msgs = appStore.live2dDialogMessages.value;
@@ -65,6 +66,10 @@ function scheduleAutoSpeak() {
   // 在 minSec ~ maxSec 秒之间随机
   const delay = (minSec + Math.random() * (maxSec - minSec)) * 1000;
   autoSpeakTimer = window.setTimeout(() => {
+    if (Date.now() < prioritySpeechUntil) {
+      scheduleAutoSpeak();
+      return;
+    }
     // 正在浏览 NSFW 条目时，有一定概率说 NSFW 特殊对话
     if (isBrowsingNsfw() && nsfwInteractionAvailable() && Math.random() < 0.3) {
       const msg = pickRandom(appStore.nsfwBrowsingMessages.value);
@@ -1091,10 +1096,27 @@ function trySmileExpression() {
   }
 }
 
+function speakCompletionCongratulations() {
+  clearAutoSpeak();
+  prioritySpeechUntil = Date.now() + 2600;
+  trySmileExpression();
+  showDialog("恭喜！", true, true);
+  dialogTimer.value = window.setTimeout(() => {
+    dialogVisible.value = false;
+    dialogTimer.value = null;
+    prioritySpeechUntil = 0;
+    scheduleAutoSpeak();
+  }, 2500);
+}
+
 watch(() => appStore.collectionSaveSuccessCounter.value, () => {
   trySmileExpression();
   showDialog("状态更新成功！");
 });
+
+watch(() => appStore.completionPosterCelebrationCounter.value, () => {
+  speakCompletionCongratulations();
+}, { flush: "sync" });
 
 defineExpose({
   loadModel,
@@ -1117,7 +1139,7 @@ defineExpose({
         'live2d-companion--loading': modelLoading,
         'live2d-companion--locked': appStore.live2dOperationLocked.value,
         'live2d-companion--idle': hasModel && !collapsed && !containerHovered,
-        'live2d-companion--over-text': overlapsDetailText,
+        'live2d-companion--over-text': overlapsDetailText && !appStore.completionPosterVisible.value,
       }"
       :style="containerStyle"
       role="complementary"

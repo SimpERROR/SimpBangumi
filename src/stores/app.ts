@@ -43,6 +43,7 @@ const live2dRefreshDialogCounter = ref(0);
 const detailBackToTopVisible = ref(false);
 // 详情抽屉打开时让看板娘鼠标穿透，避免遮挡抽屉操作。
 const detailDrawerOpen = ref(false);
+const completionPosterVisible = ref(false);
 
 // NSFW 互动
 const nsfwInteractionEnabled = ref(true);
@@ -56,6 +57,7 @@ const currentDetailNsfw = ref(false);
 const nsfwExitTriggerCounter = ref(0);
 // 收藏状态保存成功 → 看板娘说话+表情
 const collectionSaveSuccessCounter = ref(0);
+const completionPosterCelebrationCounter = ref(0);
 
 // 更新选项
 const checkUpdateOnStartup = ref(true);
@@ -244,6 +246,7 @@ export function useAppStore() {
     live2dRefreshDialogCounter,
     detailBackToTopVisible,
     detailDrawerOpen,
+    completionPosterVisible,
     nsfwInteractionEnabled,
     nsfwWarningMessages,
     nsfwBrowsingMessages,
@@ -252,6 +255,7 @@ export function useAppStore() {
     currentDetailNsfw,
     nsfwExitTriggerCounter,
     collectionSaveSuccessCounter,
+    completionPosterCelebrationCounter,
     live2dModels,
     live2dActiveModel,
     live2dDialogMessages,

@@ -681,10 +681,6 @@ let quizPointerSamples: MaliciousPointerSample[] = [];
 let lastQuizPointerSampleAt = 0;
 let quizInitializationRunId = 0;
 let quizInitializationClock: number | undefined;
-type OpenCvRuntime = Record<string, any>;
-let openCvRuntimePromise: Promise<OpenCvRuntime | null> | null = null;
-let animeFaceCascadePromise: Promise<boolean> | null = null;
-
 const memoryComplete = computed(() => memoryCards.value.length > 0 && matchedSubjectIds.value.length === memoryCards.value.length / 2);
 const currentQuestion = computed(() => quizQuestions.value[quizIndex.value] ?? null);
 const quizConfig = computed(() => QUIZ_DIFFICULTIES[quizDifficulty.value]);
@@ -2734,166 +2730,6 @@ function rgbToHsv(red: number, green: number, blue: number): [number, number, nu
   return [hue, maximum ? delta / maximum : 0, maximum];
 }
 
-async function getOpenCvRuntime(): Promise<OpenCvRuntime | null> {
-  if (openCvRuntimePromise) return openCvRuntimePromise;
-  openCvRuntimePromise = (async () => {
-    try {
-      const imported = await import("@techstark/opencv-js");
-      let module: unknown = imported;
-      for (let depth = 0; depth < 4; depth += 1) {
-        if (module && typeof (module as PromiseLike<unknown>).then === "function") {
-          module = await module as PromiseLike<unknown>;
-          continue;
-        }
-        const nestedDefault = (module as { default?: unknown } | null)?.default;
-        if (nestedDefault === undefined || nestedDefault === module) break;
-        module = nestedDefault;
-      }
-      const cv = module as OpenCvRuntime;
-      if (cv.Mat) return cv;
-      await new Promise<void>((resolve, reject) => {
-        const timeout = window.setTimeout(() => reject(new Error("OpenCV initialization timed out")), 12_000);
-        cv.onRuntimeInitialized = () => {
-          window.clearTimeout(timeout);
-          resolve();
-        };
-      });
-      return cv.Mat ? cv : null;
-    } catch {
-      return null;
-    }
-  })();
-  return openCvRuntimePromise;
-}
-
-async function ensureAnimeFaceCascade(cv: OpenCvRuntime): Promise<boolean> {
-  if (animeFaceCascadePromise) return animeFaceCascadePromise;
-  animeFaceCascadePromise = (async () => {
-    try {
-      const response = await fetch(`${import.meta.env.BASE_URL}models/animeface/lbpcascade_animeface.xml`);
-      if (!response.ok) return false;
-      const data = new Uint8Array(await response.arrayBuffer());
-      try { cv.FS_unlink("/lbpcascade_animeface.xml"); } catch { /* file may not exist */ }
-      cv.FS_createDataFile("/", "lbpcascade_animeface.xml", data, true, false, false);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-  return animeFaceCascadePromise;
-}
-
-async function detectOpenCvAnimeFaces(canvas: HTMLCanvasElement): Promise<MaliciousVisualRegion[]> {
-  const cv = await getOpenCvRuntime();
-  if (!cv || typeof cv.CascadeClassifier !== "function" || !await ensureAnimeFaceCascade(cv)) return [];
-  const source = cv.imread(canvas);
-  const gray = new cv.Mat();
-  const faces = new cv.RectVector();
-  const classifier = new cv.CascadeClassifier();
-  try {
-    cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
-    cv.equalizeHist(gray, gray);
-    if (!classifier.load("lbpcascade_animeface.xml")) return [];
-    classifier.detectMultiScale(
-      gray,
-      faces,
-      1.08,
-      4,
-      0,
-      new cv.Size(Math.max(20, Math.round(canvas.width * .08)), Math.max(20, Math.round(canvas.width * .08))),
-    );
-    const regions: MaliciousVisualRegion[] = [];
-    for (let index = 0; index < faces.size(); index += 1) {
-      const face = faces.get(index);
-      regions.push({
-        x: face.x / canvas.width,
-        y: face.y / canvas.height,
-        width: face.width / canvas.width,
-        height: face.height / canvas.height,
-        confidence: .98,
-      });
-    }
-    return regions;
-  } catch {
-    return [];
-  } finally {
-    source.delete();
-    gray.delete();
-    faces.delete();
-    classifier.delete();
-  }
-}
-
-function collectOpenCvTextContours(
-  cv: OpenCvRuntime,
-  edges: any,
-  canvas: HTMLCanvasElement,
-  vertical: boolean,
-): MaliciousVisualRegion[] {
-  const closed = new cv.Mat();
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
-  const kernelWidth = vertical ? 3 : Math.max(9, Math.round(canvas.width * .075));
-  const kernelHeight = vertical ? Math.max(9, Math.round(canvas.height * .055)) : 3;
-  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kernelWidth, kernelHeight));
-  try {
-    cv.morphologyEx(edges, closed, cv.MORPH_CLOSE, kernel);
-    cv.findContours(closed, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-    const regions: MaliciousVisualRegion[] = [];
-    for (let index = 0; index < contours.size(); index += 1) {
-      const contour = contours.get(index);
-      const bounds = cv.boundingRect(contour);
-      contour.delete();
-      const widthRatio = bounds.width / canvas.width;
-      const heightRatio = bounds.height / canvas.height;
-      const aspectRatio = bounds.width / Math.max(1, bounds.height);
-      const valid = vertical
-        ? heightRatio >= .13 && widthRatio >= .035 && widthRatio <= .36 && aspectRatio <= 1.15
-        : widthRatio >= .13 && heightRatio >= .025 && heightRatio <= .3 && aspectRatio >= 1.25;
-      if (!valid) continue;
-      const areaRatio = widthRatio * heightRatio;
-      if (areaRatio < .004 || areaRatio > .3) continue;
-      regions.push({
-        x: bounds.x / canvas.width,
-        y: bounds.y / canvas.height,
-        width: widthRatio,
-        height: heightRatio,
-        confidence: Math.min(.96, .56 + Math.sqrt(areaRatio) * .9),
-      });
-    }
-    return regions;
-  } finally {
-    closed.delete();
-    contours.delete();
-    hierarchy.delete();
-    kernel.delete();
-  }
-}
-
-async function detectOpenCvTextRegions(canvas: HTMLCanvasElement): Promise<MaliciousVisualRegion[]> {
-  const cv = await getOpenCvRuntime();
-  if (!cv) return [];
-  const source = cv.imread(canvas);
-  const gray = new cv.Mat();
-  const edges = new cv.Mat();
-  try {
-    cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, gray, new cv.Size(3, 3), 0);
-    cv.Canny(gray, edges, 60, 160);
-    return mergeVisualRegions(
-      collectOpenCvTextContours(cv, edges, canvas, false),
-      collectOpenCvTextContours(cv, edges, canvas, true),
-      5,
-    );
-  } catch {
-    return [];
-  } finally {
-    source.delete();
-    gray.delete();
-    edges.delete();
-  }
-}
-
 type VisualAnalysisMaps = {
   luminance: Float32Array;
   edge: Float32Array;
@@ -3311,12 +3147,11 @@ async function loadVisualFeature(subject: GameSubject): Promise<MaliciousVisualF
         const detectionPixels = detectionContext.getImageData(0, 0, detectionCanvas.width, detectionCanvas.height).data;
         const detectionMaps = buildVisualAnalysisMaps(detectionPixels, detectionCanvas.width, detectionCanvas.height);
         const heuristicTextRegions = detectTextLikeRegions(detectionMaps, detectionCanvas.width, detectionCanvas.height);
-        const [openCvFaceRegions, openCvTextRegions] = await Promise.all([
-          detectOpenCvAnimeFaces(detectionCanvas),
-          detectOpenCvTextRegions(detectionCanvas),
+        const [nativeFaceRegions, nativeTextRegions] = await Promise.all([
+          detectNativeVisualRegionsWithDeadline(image, "FaceDetector"),
+          detectNativeVisualRegionsWithDeadline(image, "TextDetector"),
         ]);
-        // Use OpenCV regions first; high-confidence local analysis keeps masking
-        // functional on browsers where the cascade or contour pass finds nothing.
+        // Keep local analysis as a fallback where browser shape detectors are unavailable.
         const reliableHeuristicFaces = heuristicFaceRegions.filter((region) => region.confidence >= .52);
         const reliableHeuristicText = heuristicTextRegions.filter((region) => region.confidence >= .34);
         const fallbackFaces = reliableHeuristicFaces.length
@@ -3325,12 +3160,12 @@ async function loadVisualFeature(subject: GameSubject): Promise<MaliciousVisualF
         const fallbackText = reliableHeuristicText.length
           ? reliableHeuristicText
           : heuristicTextRegions.slice(0, 1);
-        const faceRegions = openCvFaceRegions.length
-          ? mergeVisualRegions(openCvFaceRegions, [], 3)
+        const faceRegions = nativeFaceRegions.length
+          ? mergeVisualRegions(nativeFaceRegions, [], 3)
           : mergeVisualRegions([], fallbackFaces, 5);
         const textRegions = selectSpatiallyDiverseVisualRegions(
           coalesceNearbyVisualRegions(
-            mergeVisualRegions(openCvTextRegions, fallbackText, 12),
+            mergeVisualRegions(nativeTextRegions, fallbackText, 12),
             10,
           ),
           7,

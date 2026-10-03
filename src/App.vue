@@ -37,30 +37,6 @@ const LibraryView = defineAsyncComponent(() => import("./views/Library.vue"));
 const MoreView = defineAsyncComponent(() => import("./views/More.vue"));
 const Live2dCompanion = defineAsyncComponent(() => import("./components/Live2dCompanion.vue"));
 
-function preloadAsyncViews() {
-  const preloadTasks = [
-    loadCollectionsView(),
-    import("./views/Schedule.vue"),
-    import("./views/Search.vue"),
-    loadSettingsView(),
-    import("./views/My.vue"),
-    import("./views/Library.vue"),
-    import("./views/More.vue"),
-    import("./components/Live2dCompanion.vue"),
-  ];
-
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(() => {
-      void Promise.allSettled(preloadTasks);
-    });
-    return;
-  }
-
-  setTimeout(() => {
-    void Promise.allSettled(preloadTasks);
-  }, 150);
-}
-
 const THEME_KEY = "bangumi.theme";
 const SUBJECT_FILTER_KEY = "bangumi.filter.subjectType";
 const COLLECTION_FILTER_KEY = "bangumi.filter.collectionType";
@@ -590,7 +566,6 @@ watch(
 
 onMounted(() => {
   setupPreferencePersistence();
-  preloadAsyncViews();
 
   void refreshWebCookieSilently();
   cookieAutoRefreshTimer.value = window.setInterval(() => {

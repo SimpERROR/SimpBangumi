@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "../stores/app";
 import { useDataStore } from "../stores/data";
 import { useSessionStore } from "../stores/session";
@@ -374,6 +376,371 @@ const TenraiMatchRefreshing = ref(false);
 const TenraiMatchError = ref("");
 const detailMoreMenuOpen = ref(false);
 const detailMoreMenuRef = ref<HTMLElement | null>(null);
+const completionPosterOpen = ref(false);
+const completionPoster = ref<{
+  subjectId: number;
+  subjectType?: number;
+  title: string;
+  cover: string;
+  watchedCount: number;
+  rating: number;
+  comment: string;
+  savedAt: string;
+  episodes?: number;
+  volumes?: number;
+  totalEpisodes?: number;
+  premiere?: string;
+  platform?: string;
+} | null>(null);
+const completionPosterFormat = ref<"png" | "jpg" | "svg">("png");
+
+type CompletionSubjectProfile = {
+  label: string;
+  eyebrow: string;
+  ordinalPrefix: string;
+  ordinalSuffix: string;
+  statusLabel: string;
+  progressLabel: string;
+  releaseLabel: string;
+  platformLabel: string;
+};
+
+function completionSubjectProfile(subjectType?: number): CompletionSubjectProfile {
+  switch (subjectType) {
+    case 1:
+      return { label: "书籍", eyebrow: "READ BOOK", ordinalPrefix: "算上这本，你已经读完", ordinalSuffix: "本书！", statusLabel: "读完", progressLabel: "总章节", releaseLabel: "出版日期", platformLabel: "出版平台" };
+    case 3:
+      return { label: "音乐", eyebrow: "LISTENED MUSIC", ordinalPrefix: "算上这张，你已经听过", ordinalSuffix: "张音乐作品！", statusLabel: "听过", progressLabel: "曲目数", releaseLabel: "发行日期", platformLabel: "发行平台" };
+    case 4:
+      return { label: "游戏", eyebrow: "CLEARED GAME", ordinalPrefix: "算上这款，你已经玩过", ordinalSuffix: "款游戏！", statusLabel: "玩过", progressLabel: "完成状态", releaseLabel: "发售日期", platformLabel: "游戏平台" };
+    case 6:
+      return { label: "三次元", eyebrow: "COMPLETED REAL", ordinalPrefix: "算上这部，你已经看过", ordinalSuffix: "部作品！", statusLabel: "看过", progressLabel: "总时长", releaseLabel: "上映日期", platformLabel: "平台" };
+    case 2:
+    default:
+      return { label: "番剧", eyebrow: "WATCHED ANIME", ordinalPrefix: "算上这部，你已经看过", ordinalSuffix: "部番剧！", statusLabel: "看过", progressLabel: "总集数", releaseLabel: "首播日期", platformLabel: "放送平台" };
+  }
+}
+
+const completionPosterCopy = computed(() => {
+  const poster = completionPoster.value;
+  if (!poster) return null;
+  const profile = completionSubjectProfile(poster.subjectType);
+  const progressValue = poster.subjectType === 1
+    ? (poster.totalEpisodes ? `${poster.totalEpisodes} 章` : poster.volumes ? `${poster.volumes} 卷` : "未注明")
+    : poster.subjectType === 4
+      ? "已完成"
+      : poster.episodes ? `${poster.episodes} 集` : "未注明";
+  return {
+    eyebrow: `SimpBangumi · ${profile.eyebrow}`,
+    headline: "恭喜完成！",
+    ordinalPrefix: profile.ordinalPrefix,
+    ordinalSuffix: profile.ordinalSuffix,
+    ratingLabel: "你的评分",
+    ratingValue: poster.rating > 0 ? `${poster.rating} / 10` : "尚未评分",
+    commentLabel: "用户简评",
+    comment: poster.comment || `这${profile.label === "书籍" ? "本" : profile.label === "游戏" ? "款" : "部"}作品已加入你的「${profile.statusLabel}」收藏。`,
+    progressLabel: profile.progressLabel,
+    progressValue,
+    premiereLabel: profile.releaseLabel,
+    premiereValue: poster.premiere || "未注明",
+    platformLabel: profile.platformLabel,
+    platformValue: poster.platform || "未注明",
+    statusLabel: profile.statusLabel,
+    metadata: `完成于 ${poster.savedAt} · 状态：${profile.statusLabel}`,
+    footer: "继续发现下一部喜欢的作品吧！",
+    brand: "SimpBangumi",
+  };
+});
+const COMPLETION_POSTER_PREFIX = "bangumi.completion-poster.";
+
+const hasCompletionPoster = computed(() => {
+  const subjectId = detail.value?.id;
+  if (!subjectId) return false;
+  if (completionPoster.value?.subjectId === subjectId) return true;
+  try {
+    return Boolean(localStorage.getItem(`${COMPLETION_POSTER_PREFIX}${subjectId}`));
+  } catch {
+    return false;
+  }
+});
+
+function completionPosterStorageKey(subjectId: number) {
+  return `${COMPLETION_POSTER_PREFIX}${subjectId}`;
+}
+
+function showCompletionPoster(poster: NonNullable<typeof completionPoster.value>) {
+  completionPoster.value = poster;
+  completionPosterOpen.value = true;
+  appStore.completionPosterVisible.value = true;
+  appStore.completionPosterCelebrationCounter.value++;
+}
+
+function closeCompletionPoster() {
+  completionPosterOpen.value = false;
+  appStore.completionPosterVisible.value = false;
+}
+
+function readCompletionPoster(subjectId: number) {
+  try {
+    const raw = localStorage.getItem(completionPosterStorageKey(subjectId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as NonNullable<typeof completionPoster.value>;
+  } catch {
+    return null;
+  }
+}
+
+function syncCompletionPosterFromCollection(subjectId = detail.value?.id) {
+  if (!subjectId) return;
+  const poster = readCompletionPoster(subjectId);
+  if (!poster) return;
+
+  const updatedPoster = {
+    ...poster,
+    rating: Number(form.rate) || 0,
+    comment: form.comment.trim(),
+  };
+  try {
+    localStorage.setItem(completionPosterStorageKey(subjectId), JSON.stringify(updatedPoster));
+  } catch {
+    // Storage may be unavailable in private or restricted contexts.
+  }
+  if (completionPoster.value?.subjectId === subjectId) {
+    completionPoster.value = updatedPoster;
+  }
+}
+
+async function getCompletedSubjectCount(subjectType: number) {
+  const result = await bangumi.getCollections({
+    type: 2,
+    subject_type: subjectType,
+    limit: 1,
+    offset: 0,
+  });
+  if (!result.ok || typeof result.data.total !== "number") return null;
+  return result.data.total;
+}
+
+async function openCompletionPosterFromStorage() {
+  const subjectId = detail.value?.id;
+  if (!subjectId) return;
+  let poster = readCompletionPoster(subjectId);
+  if (!poster) {
+    appStore.showToast("还没有保存的完成海报。", "info");
+    detailMoreMenuOpen.value = false;
+    return;
+  }
+
+  // Older posters were created before subjectType was persisted. Migrate them using
+  // the currently loaded subject detail instead of assuming they are anime.
+  const subjectType = poster.subjectType ?? detail.value?.type ?? SUBJECT_TYPE_ANIME;
+  if (poster.subjectType !== subjectType) {
+    poster = {
+      ...poster,
+      subjectType,
+      episodes: Number(detail.value?.eps) || poster.episodes,
+      volumes: Number(detail.value?.volumes) || poster.volumes,
+      totalEpisodes: Number(detail.value?.total_episodes) || poster.totalEpisodes,
+      premiere: detail.value?.date || poster.premiere,
+      platform: detail.value?.platform || poster.platform,
+    };
+    try {
+      localStorage.setItem(completionPosterStorageKey(subjectId), JSON.stringify(poster));
+    } catch {
+      // Storage may be unavailable in private or restricted contexts.
+    }
+  }
+
+  // Keep posters created before a later rating/comment edit in sync with the collection form.
+  if (savedCollectionType.value === 2) {
+    const currentRating = Number(form.rate) || 0;
+    const currentComment = form.comment.trim();
+    if (poster.rating !== currentRating || poster.comment !== currentComment) {
+      poster = { ...poster, rating: currentRating, comment: currentComment };
+      try {
+        localStorage.setItem(completionPosterStorageKey(subjectId), JSON.stringify(poster));
+      } catch {
+        // Storage may be unavailable in private or restricted contexts.
+      }
+    }
+  }
+
+  // Refresh older posters so their ordinal reflects the completed count for this subject type.
+  const completedSubjectCount = await getCompletedSubjectCount(subjectType);
+  if (completedSubjectCount !== null && completedSubjectCount !== poster.watchedCount) {
+    poster = { ...poster, watchedCount: completedSubjectCount, subjectType };
+    try {
+      localStorage.setItem(completionPosterStorageKey(subjectId), JSON.stringify(poster));
+    } catch {
+      // Storage may be unavailable in private or restricted contexts.
+    }
+  }
+  showCompletionPoster(poster);
+  detailMoreMenuOpen.value = false;
+}
+
+function escapeXml(value: string) {
+  return value.replace(/[<>&'\"]/g, (char) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", "\"": "&quot;" }[char] ?? char));
+}
+
+function wrapPosterText(value: string, maxChars: number) {
+  const lines: string[] = [];
+  for (const paragraph of value.split(/\r?\n/)) {
+    const characters = Array.from(paragraph || " ");
+    for (let offset = 0; offset < characters.length; offset += maxChars) {
+      lines.push(characters.slice(offset, offset + maxChars).join(""));
+    }
+  }
+  return lines;
+}
+
+function posterTextLines(lines: string[], x: number, startY: number, lineHeight: number, size: number, color: string, weight = 400) {
+  return lines.map((line, index) => `<text x="${x}" y="${startY + index * lineHeight}" fill="${color}" font-size="${size}" font-family="sans-serif" font-weight="${weight}">${escapeXml(line)}</text>`).join("");
+}
+
+function buildEVAInspiredPoster(
+  poster: NonNullable<typeof completionPoster.value>,
+  copy: NonNullable<typeof completionPosterCopy.value>,
+  coverImage: string,
+  titleLines: string[],
+  commentLines: string[],
+) {
+  const commentY = 968;
+  const commentHeight = Math.max(190, 100 + commentLines.length * 36);
+  const footerY = commentY + commentHeight + 78;
+  const height = Math.max(1370, footerY + 100);
+  const ordinal = String(poster.watchedCount).padStart(3, "0");
+  const ordinalSize = poster.watchedCount > 9999 ? 92 : 118;
+  const cover = coverImage
+    ? '<image href="' + coverImage + '" x="84" y="280" width="288" height="384" preserveAspectRatio="xMidYMid slice"/>'
+    : '<rect x="84" y="280" width="288" height="384" rx="8" fill="#4a3a5b"/><text x="228" y="475" text-anchor="middle" fill="#c8ff36" font-size="22" font-family="sans-serif">NO COVER</text>';
+
+  return [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="' + height + '" viewBox="0 0 900 ' + height + '">',
+    '<defs><linearGradient id="paper" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f6f1e8"/><stop offset="1" stop-color="#e8e2d8"/></linearGradient><linearGradient id="violet" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#241831"/><stop offset="1" stop-color="#49305c"/></linearGradient><pattern id="hazard" width="24" height="24" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="12" height="24" fill="#c8ff36"/><rect x="12" width="12" height="24" fill="#251b2f"/></pattern></defs>',
+    '<rect width="900" height="' + height + '" fill="url(#paper)"/><rect width="900" height="18" fill="#c8ff36"/><rect y="18" width="900" height="7" fill="#ed5d35"/><rect width="20" height="' + height + '" fill="#281d35"/>',
+    '<text x="64" y="72" fill="#5c4c66" font-size="16" font-family="sans-serif" font-weight="700">' + escapeXml(copy.eyebrow) + ' / ARCHIVE 01</text><text x="64" y="144" fill="#241831" font-size="56" font-family="sans-serif" font-weight="800">' + escapeXml(copy.headline) + '</text>',
+    posterTextLines(titleLines, 66, 190, 32, 22, "#5b4a63", 600),
+    '<rect x="64" y="232" width="772" height="472" rx="8" fill="url(#violet)"/><rect x="64" y="232" width="772" height="12" fill="#ed5d35"/><path d="M64 690h772" stroke="#c8ff36" stroke-width="4"/>',
+    cover,
+    '<rect x="76" y="272" width="304" height="400" fill="none" stroke="#c8ff36" stroke-width="2"/><rect x="84" y="280" width="288" height="384" fill="none" stroke="#f6f1e8" stroke-opacity=".38"/>',
+    '<text x="420" y="294" fill="#c8ff36" font-size="15" font-family="sans-serif" font-weight="700">COMPLETION INDEX / SUBJECT ' + poster.subjectId + '</text><text x="420" y="420" fill="#f6f1e8" font-size="' + ordinalSize + '" font-family="sans-serif" font-weight="800">' + ordinal + '</text>',
+    '<text x="424" y="462" fill="#f6f1e8" font-size="22" font-family="sans-serif" font-weight="700">' + escapeXml(copy.ordinalPrefix) + ' ' + poster.watchedCount + ' ' + escapeXml(copy.ordinalSuffix) + '</text><path d="M420 490h360" stroke="#8d789a" stroke-width="2"/>',
+    '<text x="420" y="532" fill="#c8ff36" font-size="15" font-family="sans-serif" font-weight="700">PERSONAL RATING</text><text x="420" y="586" fill="#f6f1e8" font-size="34" font-family="sans-serif" font-weight="700">' + escapeXml(copy.ratingValue) + '</text><text x="420" y="634" fill="#d5cbd9" font-size="16" font-family="sans-serif">' + escapeXml(copy.metadata) + '</text><rect x="690" y="250" width="146" height="18" fill="url(#hazard)"/>',
+    '<rect x="64" y="742" width="772" height="204" rx="8" fill="#c8ff36"/><text x="88" y="780" fill="#241831" font-size="14" font-family="sans-serif" font-weight="800">COLLECTION DATA / 作品信息</text><path d="M88 796h724M88 872h724" stroke="#8daf20" stroke-width="2"/>',
+    '<text x="88" y="828" fill="#51455a" font-size="13" font-family="sans-serif">状态</text><text x="88" y="858" fill="#241831" font-size="21" font-family="sans-serif" font-weight="800">COMPLETED / ' + escapeXml(copy.statusLabel) + '</text><text x="460" y="828" fill="#51455a" font-size="13" font-family="sans-serif">' + escapeXml(copy.progressLabel) + '</text><text x="460" y="858" fill="#241831" font-size="21" font-family="sans-serif" font-weight="800">' + escapeXml(copy.progressValue) + '</text>',
+    '<text x="88" y="904" fill="#51455a" font-size="13" font-family="sans-serif">' + escapeXml(copy.premiereLabel) + '</text><text x="88" y="932" fill="#241831" font-size="18" font-family="sans-serif" font-weight="800">' + escapeXml(copy.premiereValue) + '</text><text x="460" y="904" fill="#51455a" font-size="13" font-family="sans-serif">' + escapeXml(copy.platformLabel) + '</text><text x="460" y="932" fill="#241831" font-size="18" font-family="sans-serif" font-weight="800">' + escapeXml(copy.platformValue) + '</text>',
+    '<rect x="64" y="' + commentY + '" width="772" height="' + commentHeight + '" rx="8" fill="#fffdf8" stroke="#241831" stroke-width="2"/><rect x="64" y="' + commentY + '" width="15" height="' + commentHeight + '" fill="#ed5d35"/><text x="100" y="' + (commentY + 45) + '" fill="#241831" font-size="24" font-family="sans-serif" font-weight="800">' + escapeXml(copy.commentLabel) + '</text><text x="794" y="' + (commentY + 56) + '" text-anchor="end" fill="#d8d0c8" font-size="58" font-family="serif">“</text><path d="M100 ' + (commentY + 72) + 'h690" stroke="#d8d0c8" stroke-width="2"/>',
+    posterTextLines(commentLines, 100, commentY + 116, 36, 21, "#3f3547"),
+    '<rect x="64" y="' + footerY + '" width="772" height="12" fill="url(#hazard)"/><text x="64" y="' + (footerY + 52) + '" fill="#241831" font-size="16" font-family="sans-serif" font-weight="800">' + escapeXml(copy.footer) + '</text><text x="836" y="' + (footerY + 52) + '" text-anchor="end" fill="#5c4c66" font-size="15" font-family="sans-serif" font-weight="700">' + escapeXml(copy.brand) + ' · ' + escapeXml(poster.savedAt) + '</text></svg>',
+  ].join("");
+}
+
+async function downloadCompletionPoster() {
+  const poster = completionPoster.value;
+  const copy = completionPosterCopy.value;
+  if (!poster || !copy) return;
+  const safeTitle = poster.title.replace(/[\\/:*?\"<>|]/g, "_");
+  const format = completionPosterFormat.value;
+  const extension = format === "jpg" ? "jpg" : format;
+  let destination: string | null;
+  try {
+    destination = await save({
+      title: "保存完成海报",
+      defaultPath: `${safeTitle}-完成海报.${extension}`,
+      filters: [{
+        name: format === "png" ? "PNG 图片" : format === "jpg" ? "JPEG 图片" : "SVG 矢量图",
+        extensions: format === "jpg" ? ["jpg", "jpeg"] : [format],
+      }],
+    });
+  } catch (error) {
+    appStore.showToast(`无法打开保存对话框：${String(error)}`, "error");
+    return;
+  }
+  if (!destination) return;
+
+  const titleLines = wrapPosterText(poster.title, 34).slice(0, 2);
+  const commentLines = wrapPosterText(copy.comment, 30);
+  let coverImage = "";
+  if (poster.cover) {
+    try {
+      const coverUrl = poster.cover.startsWith("//") ? `https:${poster.cover}` : poster.cover;
+      coverImage = await invoke<string>("bangumi_fetch_image_data_url", { url: coverUrl });
+    } catch {
+      coverImage = "";
+    }
+  }
+  const exportSvg = buildEVAInspiredPoster(poster, copy, coverImage, titleLines, commentLines);
+  try {
+    let output: Blob;
+    if (format === "svg") {
+      output = new Blob([exportSvg], { type: "image/svg+xml;charset=utf-8" });
+    } else {
+      const svgUrl = URL.createObjectURL(new Blob([exportSvg], { type: "image/svg+xml;charset=utf-8" }));
+      try {
+        const image = new Image();
+        image.src = svgUrl;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = 1800;
+        canvas.height = Math.round((canvas.width * image.naturalHeight) / image.naturalWidth);
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("无法初始化图片画布");
+        if (format !== "png") {
+          context.fillStyle = "#eaf7f1";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        output = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("图片编码失败")), format === "png" ? "image/png" : "image/jpeg", 0.94);
+        });
+      } finally {
+        URL.revokeObjectURL(svgUrl);
+      }
+    }
+    const bytes = Array.from(new Uint8Array(await output.arrayBuffer()));
+    const outputPath = /\.(png|jpe?g|svg)$/i.test(destination)
+      ? destination.replace(/\.(png|jpe?g|svg)$/i, `.${extension}`)
+      : `${destination}.${extension}`;
+    await invoke("save_image_bytes_to_path", { bytes, path: outputPath });
+    appStore.showToast("完成海报已保存。", "success");
+  } catch (error) {
+    appStore.showToast(`保存完成海报失败：${String(error)}`, "error");
+  }
+}
+
+async function createCompletionPoster(isNewCompletion = true) {
+  if (!detail.value) return;
+  const subjectId = detail.value.id;
+  const subjectType = detail.value.type;
+  const completedSubjectCount = await getCompletedSubjectCount(subjectType);
+  // The API total is the user's watched-anime count. Never use detail.collection.collect here:
+  // that field is the community-wide number of users who collected this subject.
+  const watchedCount = completedSubjectCount ?? (isNewCompletion ? 1 : 0);
+  const poster = {
+    subjectId,
+    subjectType,
+    title: preferredSubjectTitle(detail.value.name, detail.value.name_cn, `Subject #${subjectId}`),
+    cover: detailCover(detail.value.images),
+    watchedCount,
+    rating: Number(form.rate) || 0,
+    comment: form.comment.trim(),
+    savedAt: new Date().toLocaleDateString("zh-CN"),
+    episodes: Number(detail.value.eps) || 0,
+    volumes: Number(detail.value.volumes) || 0,
+    totalEpisodes: Number(detail.value.total_episodes) || 0,
+    premiere: detail.value.date || "",
+    platform: detail.value.platform || "",
+  };
+  showCompletionPoster(poster);
+  try {
+    localStorage.setItem(completionPosterStorageKey(subjectId), JSON.stringify(poster));
+  } catch {
+    // Storage may be unavailable in private or restricted contexts.
+  }
+}
 
 const DEBUG_SCORE_KEY = "bangumi.Tenrai.debugScore";
 const TenraiDebugScore = ref(localStorage.getItem(DEBUG_SCORE_KEY) === "1");
@@ -2941,6 +3308,7 @@ function handleToggleBroadcastFollow() {
 function closeDetail() {
   const wasNsfw = appStore.currentDetailNsfw.value;
   detailOpen.value = false;
+  closeCompletionPoster();
   showDetailBackToTop.value = false;
   appStore.detailBackToTopVisible.value = false;
   appStore.currentDetailNsfw.value = false;
@@ -3100,6 +3468,8 @@ async function saveCollectionStatus() {
     return;
   }
 
+  const wasAlreadyCompleted = savedCollectionType.value === 2;
+  const isCompletingNow = !wasAlreadyCompleted && form.type === 2;
   collectionSaving.value = true;
   collectionError.value = "";
   collectionSavedMessage.value = "";
@@ -3179,6 +3549,11 @@ async function saveCollectionStatus() {
   collectionSaving.value = false;
   // 通知看板娘
   appStore.collectionSaveSuccessCounter.value++;
+  if (isCompletingNow) {
+    await createCompletionPoster();
+  } else if (form.type === 2) {
+    syncCompletionPosterFromCollection(subjectId);
+  }
 }
 
 function formatInfoboxValue(value: unknown): string {
@@ -3592,6 +3967,65 @@ defineExpose({
       </section>
     </div>
   </Transition>
+  <Teleport to="body">
+  <Transition name="completion-poster">
+    <div
+      v-if="completionPosterOpen && completionPoster"
+      class="completion-poster-overlay"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="`${completionPosterCopy?.label ?? '作品'}完成海报`"
+      @click.self="closeCompletionPoster"
+    >
+      <div class="completion-confetti completion-confetti--left" aria-hidden="true">
+        <i v-for="index in 18" :key="`left-${index}`" :style="{ '--i': index }"></i>
+      </div>
+      <div class="completion-confetti completion-confetti--right" aria-hidden="true">
+        <i v-for="index in 18" :key="`right-${index}`" :style="{ '--i': index }"></i>
+      </div>
+      <section class="completion-poster">
+        <button class="completion-poster__close" type="button" aria-label="关闭海报" @click="closeCompletionPoster">×</button>
+        <h2>{{ completionPosterCopy?.headline }}</h2>
+        <p class="completion-poster__title">{{ completionPoster.title }}</p>
+        <div class="completion-poster__main">
+          <div class="completion-poster__cover-column">
+            <div class="completion-poster__cover">
+              <img v-if="completionPoster.cover" :src="completionPoster.cover" alt="" />
+              <span v-else>NO COVER</span>
+            </div>
+            <p class="completion-poster__other">{{ completionPosterCopy?.metadata }}</p>
+          </div>
+          <div class="completion-poster__facts">
+            <p class="completion-poster__ordinal">
+              <span>{{ completionPosterCopy?.ordinalPrefix }}</span>
+              <strong>{{ completionPoster.watchedCount }}</strong>
+              <span>{{ completionPosterCopy?.ordinalSuffix }}</span>
+            </p>
+            <p class="completion-poster__rating">
+              <span>{{ completionPosterCopy?.ratingLabel }}</span>
+              <strong>{{ completionPosterCopy?.ratingValue }}</strong>
+            </p>
+            <div class="completion-poster__comment">
+              <span>{{ completionPosterCopy?.commentLabel }}</span>
+              <p>{{ completionPosterCopy?.comment }}</p>
+            </div>
+            <div class="completion-poster__actions">
+              <label class="completion-poster__format" aria-label="保存格式">
+                <select v-model="completionPosterFormat" aria-label="保存格式">
+                  <option value="png">PNG</option>
+                  <option value="jpg">JPEG</option>
+                  <option value="svg">SVG</option>
+                </select>
+              </label>
+              <button class="secondary-button" type="button" @click="downloadCompletionPoster">保存到本地</button>
+              <button class="primary-button" type="button" @click="closeCompletionPoster">继续浏览</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </Transition>
+  </Teleport>
   <Transition name="drawer">
     <div v-if="detailOpen" class="drawer-backdrop">
       <div class="drawer-overlay" @click="closeDetail"></div>
@@ -3633,6 +4067,14 @@ defineExpose({
           </button>
           <Transition name="detail-menu"><div v-if="detailMoreMenuOpen" class="detail-more-menu__dropdown">
             <button v-if="sessionStore.authenticated.value && ['subject', 'person', 'character'].includes(detailPage)" class="detail-more-menu__item" type="button" @click="openIndexPicker">加入目录</button>
+            <button
+              v-if="detailPage === 'subject' && form.type === 2"
+              class="detail-more-menu__item"
+              type="button"
+              @click="hasCompletionPoster ? openCompletionPosterFromStorage() : createCompletionPoster(false)"
+            >
+              {{ hasCompletionPoster ? '查看完成海报' : '生成完成海报' }}
+            </button>
             <template v-if="detailPage === 'subject' && detail?.type === 2">
               <button
                 class="detail-more-menu__item"
